@@ -58,8 +58,8 @@ export function buildToolDefinitions(getRuntime: () => VibeMemoryRuntime | undef
       const result = await callRuntime(getRuntime(), "sync", params, { status: "not-configured" });
       return textResult(`pi-vibe-memory sync: ${formatUnknown(result, "complete")}`, { status: "ok", result });
     }),
-    tool(TOOL_NAMES.import, "Import Vibe Memory", "Preview or explicitly run a legacy memory import.", schema({ source: stringSchema("Import source"), path: stringSchema("Optional source path"), dryRun: booleanSchema("Preview only") }, ["source"]), async (params) => {
-      const normalized = { dryRun: true, ...params };
+    tool(TOOL_NAMES.import, "Import Vibe Memory", "Preview or explicitly run a legacy memory import from supplied records only.", schema({ source: stringSchema("Import source"), records: arraySchema("Legacy records supplied by the user or caller"), dryRun: booleanSchema("Preview only") }, ["source"]), async (params) => {
+      const normalized = { dryRun: true, records: [], ...params };
       const result = await callRuntime(getRuntime(), "import", normalized, { status: "preview", dryRun: normalized.dryRun });
       return textResult(`${UNTRUSTED_NOTICE}\nImport ${normalized.dryRun === false ? "result" : "preview"}: ${formatUnknown(result, "no items")}`, { status: "ok", result });
     }),
@@ -144,4 +144,8 @@ function numberSchema(description: string): JsonSchema {
 
 function booleanSchema(description: string): JsonSchema {
   return { type: "boolean", description };
+}
+
+function arraySchema(description: string): JsonSchema {
+  return { type: "array", description, items: { type: "object", additionalProperties: true } };
 }

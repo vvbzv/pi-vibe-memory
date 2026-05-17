@@ -75,6 +75,26 @@ test("recall labels returned memory as untrusted reference data", async () => {
   assert.match(result.content[0].text, /Prior decision/);
 });
 
+test("import tool accepts supplied records and does not expose path scanning", async () => {
+  let importedParams: Record<string, unknown> | undefined;
+  const [importTool] = buildToolDefinitions(() => ({
+    import: async (params) => {
+      importedParams = params;
+      return { status: "imported", count: Array.isArray(params.records) ? params.records.length : 0 };
+    },
+  })).filter((tool) => tool.name === TOOL_NAMES.import);
+
+  assert.ok(importTool.parameters.properties && !("path" in (importTool.parameters.properties as Record<string, unknown>)));
+  assert.ok("records" in (importTool.parameters.properties as Record<string, unknown>));
+
+  const records = [{ id: "legacy1", content: "old fact" }];
+  const result = await importTool.execute("call1", { source: "observational-memory", records, dryRun: false }, new AbortController().signal);
+
+  assert.deepEqual(importedParams?.records, records);
+  assert.equal(importedParams?.dryRun, false);
+  assert.match(result.content[0].text, /imported/i);
+});
+
 test("doctor tool uses runtime doctor when available", async () => {
   let called = false;
   const [doctor] = buildToolDefinitions(() => ({
