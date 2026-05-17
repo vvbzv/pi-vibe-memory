@@ -61,7 +61,7 @@ test("normalizeTurnEndEvent returns compact scrubbed provenance without raw prom
   const serialized = JSON.stringify(normalized);
   assert.ok(!serialized.includes("abc123456789abcdef"));
   assert.ok(!serialized.includes("Please update src/capture.ts"));
-  assert.equal(normalized.observation.title, "User requested: Assistant completed a turn");
+  assert.equal(normalized.observation.title, "Assistant completed a turn");
   assert.equal(normalized.observation.sourceEventId, normalized.rawEvent.id);
   assert.equal(normalized.observation.provenance.entryId, "entry9");
   assert.ok(normalized.observation.content.length <= 80);

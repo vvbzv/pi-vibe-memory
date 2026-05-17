@@ -92,7 +92,7 @@ export function normalizeTurnEndEvent(input: NormalizedTurnEndInput): Normalized
   const rawEventId = `evt_${digest(sourceKey)}`;
   const scrubbedPrompt = promptCapturable ? scrubSecrets(prompt, { maxChars: maxSnippetChars }) : undefined;
   const scrubbedAssistant = assistant ? scrubSecrets(assistant, { maxChars: maxSnippetChars }) : undefined;
-  const titleBase = scrubbedPrompt ? truncateText(scrubbedPrompt, 72) : "Assistant completed a turn";
+  const titleBase = scrubbedPrompt ? `User requested: ${truncateText(scrubbedPrompt, 72)}` : "Assistant completed a turn";
   const contentParts = [
     scrubbedPrompt ? `User requested: ${truncateText(scrubbedPrompt, maxSnippetChars)}` : undefined,
     scrubbedAssistant ? `Assistant summary: ${scrubbedAssistant}` : undefined,
@@ -118,7 +118,7 @@ export function normalizeTurnEndEvent(input: NormalizedTurnEndInput): Normalized
     observation: {
       id: `obs_${digest(`${rawEventId}:turn_summary`)}`,
       kind: "turn_summary",
-      title: `User requested: ${titleBase}`,
+      title: titleBase,
       content: truncateText(contentParts.join("\n"), maxSnippetChars),
       sourceEventId: rawEventId,
       provenance: {
