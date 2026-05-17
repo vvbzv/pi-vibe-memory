@@ -14,6 +14,7 @@ export const TOOL_NAMES = {
   reviewInstincts: "vibe_memory_review_instincts",
   compare: "vibe_memory_compare",
   revise: "vibe_memory_revise",
+  doctor: "vibe_memory_doctor",
 } as const;
 
 export const COMMAND_NAMES = {
@@ -24,4 +25,5 @@ export const COMMAND_NAMES = {
   meditate: "vibe-memory-meditate",
   reviewInstincts: "vibe-memory-review-instincts",
   disableInjection: "vibe-memory-disable-injection",
+  doctor: "vibe-memory-doctor",
 } as const;
