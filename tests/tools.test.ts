@@ -77,7 +77,7 @@ test("recall labels returned memory as untrusted reference data", async () => {
   assert.match(result.content[0].text, /Prior decision/);
 });
 
-test("import tool accepts supplied records and does not expose path scanning", async () => {
+test("import tool accepts supplied records and exposes explicit migration path only", async () => {
   let importedParams: Record<string, unknown> | undefined;
   const [importTool] = buildToolDefinitions(() => ({
     import: async (params) => {
@@ -86,7 +86,8 @@ test("import tool accepts supplied records and does not expose path scanning", a
     },
   })).filter((tool) => tool.name === TOOL_NAMES.import);
 
-  assert.ok(importTool.parameters.properties && !("path" in (importTool.parameters.properties as Record<string, unknown>)));
+  assert.ok(importTool.parameters.properties && "path" in (importTool.parameters.properties as Record<string, unknown>));
+  assert.match(JSON.stringify(importTool.parameters), /explicit local continuous-learning migration path/i);
   assert.ok("records" in (importTool.parameters.properties as Record<string, unknown>));
 
   const records = [{ id: "legacy1", content: "old fact" }];

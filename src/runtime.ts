@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import os from "node:os";
+import path from "node:path";
 import { extractArtifactReferences } from "./codeReferences.js";
 import { ALLOWED_MEMORY_KINDS, MEMORY_SCOPES } from "./constants.js";
 import { buildCompactionSummary, shouldSkipCustomCompaction } from "./compaction.js";
-import { mapContinuousLearningFact, mapContinuousLearningInstinct } from "./importers/continuousLearning.js";
+import { loadContinuousLearningDirectory, mapContinuousLearningFact, mapContinuousLearningInstinct } from "./importers/continuousLearning.js";
 import { mapLapisArtifact } from "./importers/lapis.js";
 import { mapObservationalMemoryRecord } from "./importers/observationalMemory.js";
 import type { NormalizedVibeMemorySettings } from "./config.js";
@@ -455,11 +457,23 @@ export class VibeMemoryRuntime {
 
   async import(params: JsonRecord): Promise<JsonRecord> {
     const source = requiredString(params.source, "source");
-    const records = Array.isArray(params.records) ? params.records : [];
+    const loaded = await this.loadImportRecords(source, params);
     const dryRun = params.dryRun !== false;
-    const mapped = this.mapImportRecords(source, records);
+    const mapped = this.mapImportRecords(source, loaded.records);
+    const report = {
+      source,
+      dryRun,
+      count: mapped.length,
+      factsFound: loaded.factsFound,
+      instinctsFound: loaded.instinctsFound,
+      importable: mapped.length,
+      needsReview: mapped.filter((item) => isRecord(item) && item.status === "needs_review").length,
+      skipped: 0,
+      warnings: loaded.warnings,
+    };
 
-    if (dryRun) return { status: "preview", dryRun: true, source, count: mapped.length, items: mapped };
+    if (dryRun) return { status: "preview", ...report, items: mapped };
+    if (params.explicit !== true) return { status: "confirmation-needed", ...report };
 
     for (const item of mapped) {
       if (isRecord(item) && isRecord(item.observation)) {
@@ -474,7 +488,7 @@ export class VibeMemoryRuntime {
       }
     }
 
-    return { status: "imported", dryRun: false, source, count: mapped.length };
+    return { status: "imported", ...report, dryRun: false };
   }
 
   async meditate(params: JsonRecord = {}): Promise<MeditationResult> {
@@ -526,6 +540,25 @@ export class VibeMemoryRuntime {
     });
     this.enqueueObservation(observation);
     return { status: "revised", id: observation.id, oldId };
+  }
+
+  private async loadImportRecords(source: string, params: JsonRecord): Promise<{ records: unknown[]; factsFound: number; instinctsFound: number; warnings: string[] }> {
+    if (source !== "continuous-learning" && source !== "pi-continuous-learning") {
+      const records = Array.isArray(params.records) ? params.records : [];
+      return { records, factsFound: 0, instinctsFound: 0, warnings: [] };
+    }
+    if (Array.isArray(params.records)) return { records: params.records, factsFound: 0, instinctsFound: 0, warnings: [] };
+
+    const rootPath = typeof params.path === "string" && params.path.trim()
+      ? params.path.trim()
+      : path.join(os.homedir(), ".pi", "continuous-learning");
+    const loaded = await loadContinuousLearningDirectory(rootPath);
+    return {
+      records: [...loaded.facts, ...loaded.instincts],
+      factsFound: loaded.facts.length,
+      instinctsFound: loaded.instincts.length,
+      warnings: loaded.warnings,
+    };
   }
 
   private mapImportRecords(source: string, records: unknown[]): unknown[] {

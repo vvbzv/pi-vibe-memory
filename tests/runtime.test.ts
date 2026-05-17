@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
 import { normalizeSettings } from "../src/config.js";
 import { VibeMemoryRuntime } from "../src/runtime.js";
 
@@ -12,6 +15,16 @@ function settings(overrides: Record<string, unknown> = {}) {
     instincts: { minEvidence: 1, maxPromptItems: 2 },
     ...overrides,
   });
+}
+
+
+async function tempContinuousLearningDir(): Promise<string> {
+  return mkdtemp(path.join(os.tmpdir(), "vibe-runtime-import-"));
+}
+
+async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(value), "utf8");
 }
 
 class FakeRepository {
@@ -277,6 +290,58 @@ test("runtime tool methods are thin, explicit, and non-destructive", async () =>
   assert.equal(repository.revisions[0].relation, "supersedes");
 });
 
+
+
+test("continuous-learning import previews directory records and apply requires explicit confirmation", async () => {
+  const root = await tempContinuousLearningDir();
+  await writeJsonFile(path.join(root, "facts.json"), [
+    { id: "fact-1", content: "Use local Hindsight in tests.", kind: "environment_fact" },
+  ]);
+  await writeJsonFile(path.join(root, "instincts.json"), [
+    { id: "instinct-1", trigger: "When importing", action: "Preview first.", durableApproved: true },
+  ]);
+  const repository = new FakeRepository();
+  const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
+
+  const preview = await runtime.import({ source: "continuous-learning", path: root }) as any;
+
+  assert.equal(preview.status, "preview");
+  assert.equal(preview.dryRun, true);
+  assert.equal(preview.count, 2);
+  assert.deepEqual(preview.warnings, []);
+  assert.equal(repository.observations.length, 0);
+  assert.equal(repository.candidates.length, 0);
+  assert.equal(preview.items.find((item: any) => item.legacyId === "fact-1").kind, "environment_fact");
+
+  const blocked = await runtime.import({ source: "continuous-learning", path: root, dryRun: false }) as any;
+  assert.equal(blocked.status, "confirmation-needed");
+  assert.equal(repository.observations.length, 0);
+  assert.equal(repository.candidates.length, 0);
+
+  const applied = await runtime.import({ source: "continuous-learning", path: root, dryRun: false, explicit: true }) as any;
+  assert.equal(applied.status, "imported");
+  assert.equal(applied.count, 2);
+  assert.equal(repository.observations.length, 1);
+  assert.equal(repository.observations[0].kind, "environment_fact");
+  assert.match(repository.observations[0].content, /Legacy source: pi-continuous-learning/);
+  assert.equal(repository.candidates.length, 1);
+  assert.equal(repository.candidates[0].durableApproved, true);
+  assert.equal(repository.candidates[0].status, "working");
+});
+
+test("continuous-learning import uses supplied records without directory scanning", async () => {
+  const repository = new FakeRepository();
+  const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
+
+  const preview = await runtime.import({
+    source: "continuous-learning",
+    records: [{ id: "record-fact", content: "Supplied record only." }],
+  }) as any;
+
+  assert.equal(preview.status, "preview");
+  assert.equal(preview.count, 1);
+  assert.equal(preview.items[0].legacyId, "record-fact");
+});
 
 test("remember validates typed durable memory fields and recall forwards typed filters", async () => {
   const repository = new FakeRepository();

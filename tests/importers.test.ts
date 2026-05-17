@@ -1,11 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import {
+  loadContinuousLearningDirectory,
   mapContinuousLearningFact,
   mapContinuousLearningInstinct,
 } from "../src/importers/continuousLearning.js";
 import { mapLapisArtifact } from "../src/importers/lapis.js";
 import { mapObservationalMemoryRecord } from "../src/importers/observationalMemory.js";
+
+async function tempDir(): Promise<string> {
+  return mkdtemp(path.join(os.tmpdir(), "vibe-memory-import-"));
+}
+
+async function writeJson(filePath: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(value), "utf8");
+}
 
 test("observational-memory records map supplied legacy records to observations with provenance", () => {
   const mapped = mapObservationalMemoryRecord({
@@ -35,6 +48,45 @@ test("observational-memory records map supplied legacy records to observations w
   assert.equal(mapped.status, "needs_review");
   assert.equal(mapped.trust, 0.75);
   assert.equal(mapped.hindsightDocumentId, "pi-import:pi-observational-memory:om-123");
+});
+
+
+test("continuous-learning directory loader reads only known files and accepts arrays or maps", async () => {
+  const root = await tempDir();
+  await writeJson(path.join(root, "facts.json"), {
+    globalFact: { content: "CLI uses npm test.", scope: "global" },
+  });
+  await writeJson(path.join(root, "instincts.json"), [
+    { id: "instinct-1", trigger: "When changing behavior", action: "Write tests first." },
+  ]);
+  await writeJson(path.join(root, "project", "facts.json"), [
+    { id: "project-fact", content: "Project memory stays local.", kind: "environment_fact" },
+  ]);
+  await writeJson(path.join(root, "project", "instincts.json"), {
+    projectInstinct: { trigger: "When importing memory", action: "Keep legacy data untouched." },
+  });
+  await writeJson(path.join(root, "unknown.json"), [{ id: "ignored", content: "must not import" }]);
+
+  const loaded = await loadContinuousLearningDirectory(root);
+
+  assert.equal(loaded.facts.length, 2);
+  assert.equal(loaded.instincts.length, 2);
+  assert.deepEqual(loaded.warnings, []);
+  assert.deepEqual(loaded.facts.map((fact) => fact.id).sort(), ["globalFact", "project-fact"]);
+  assert.deepEqual(loaded.instincts.map((instinct) => instinct.id).sort(), ["instinct-1", "projectInstinct"]);
+  assert.equal(loaded.facts.find((fact) => fact.id === "project-fact")?.scope, "project");
+});
+
+test("continuous-learning directory loader tolerates missing and invalid known files", async () => {
+  const root = await tempDir();
+  await writeFile(path.join(root, "facts.json"), "not-json", "utf8");
+
+  const loaded = await loadContinuousLearningDirectory(root);
+
+  assert.deepEqual(loaded.facts, []);
+  assert.deepEqual(loaded.instincts, []);
+  assert.equal(loaded.warnings.length, 1);
+  assert.match(loaded.warnings[0], /facts\.json/);
 });
 
 test("continuous-learning facts map to declarative observations without deleting legacy knowledge", () => {
@@ -84,7 +136,8 @@ test("continuous-learning instincts map to non-durable working candidates requir
   assert.equal(mapped.kind, "behavior_instinct");
   assert.equal(mapped.trigger, "When adding package behavior");
   assert.equal(mapped.action, "Write a failing test first.");
-  assert.equal(mapped.content, "When adding package behavior\nWrite a failing test first.");
+  assert.match(mapped.content, /When adding package behavior\nWrite a failing test first\./);
+  assert.match(mapped.content, /Legacy source: pi-continuous-learning/);
   assert.equal(mapped.status, "needs_review");
   assert.equal(mapped.durableApproved, false);
   assert.equal(mapped.reviewed, false);
