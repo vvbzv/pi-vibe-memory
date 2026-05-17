@@ -1,0 +1,29 @@
+{
+  "name": "pi-vibe-memory",
+  "version": "0.1.0",
+  "description": "Local-first Hindsight-integrated memory package for Pi Agents",
+  "type": "module",
+  "private": true,
+  "keywords": ["pi-package", "pi", "memory", "hindsight"],
+  "scripts": {
+    "test": "tsx --test tests/**/*.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  }
+}
