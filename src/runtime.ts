@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 import { extractArtifactReferences } from "./codeReferences.js";
+import { mapContinuousLearningFact, mapContinuousLearningInstinct } from "./importers/continuousLearning.js";
+import { mapLapisArtifact } from "./importers/lapis.js";
+import { mapObservationalMemoryRecord } from "./importers/observationalMemory.js";
 import type { NormalizedVibeMemorySettings } from "./config.js";
 import { runDoctorChecks } from "./doctor.js";
 import { normalizeBankId } from "./hindsight/banks.js";
@@ -118,7 +121,7 @@ export class VibeMemoryRuntime {
       codeReferences: this.listArtifactReferences(),
       local,
       workspace,
-      revisions: [],
+      revisions: this.listRevisionNotes(local),
     });
 
     if (!block) return input;
@@ -357,7 +360,27 @@ export class VibeMemoryRuntime {
   }
 
   async import(params: JsonRecord): Promise<JsonRecord> {
-    return { status: params.dryRun === false ? "not-implemented" : "preview", dryRun: params.dryRun !== false, source: params.source };
+    const source = requiredString(params.source, "source");
+    const records = Array.isArray(params.records) ? params.records : [];
+    const dryRun = params.dryRun !== false;
+    const mapped = this.mapImportRecords(source, records);
+
+    if (dryRun) return { status: "preview", dryRun: true, source, count: mapped.length, items: mapped };
+
+    for (const item of mapped) {
+      if (isRecord(item) && isRecord(item.observation)) {
+        this.repository.addObservation(item.observation as unknown as ObservationInput);
+        if (isRecord(item.artifactReference)) this.repository.upsertArtifactReference?.(item.artifactReference as unknown as ArtifactReferenceInput);
+        this.enqueueObservation(item.observation as unknown as ObservationInput);
+      } else if (isRecord(item) && typeof item.content === "string" && typeof item.title === "string") {
+        this.repository.addObservation(item as unknown as ObservationInput);
+        this.enqueueObservation(item as unknown as ObservationInput);
+      } else if (isRecord(item) && typeof item.trigger === "string" && typeof item.action === "string") {
+        this.repository.addInstinctCandidate?.(item as unknown as InstinctCandidateInput);
+      }
+    }
+
+    return { status: "imported", dryRun: false, source, count: mapped.length };
   }
 
   async meditate(params: JsonRecord = {}): Promise<MeditationResult> {
@@ -407,6 +430,29 @@ export class VibeMemoryRuntime {
     return { status: "revised", id: observation.id, oldId };
   }
 
+  private mapImportRecords(source: string, records: unknown[]): unknown[] {
+    switch (source) {
+      case "pi-observational-memory":
+      case "observational-memory":
+        return records.map((record) => mapObservationalMemoryRecord({ record: record as any, workspaceId: this.workspaceId, sessionId: this.sessionId }));
+      case "pi-continuous-learning":
+      case "continuous-learning": {
+        const items: unknown[] = [];
+        for (const record of records) {
+          const candidate = record as any;
+          items.push(typeof candidate.trigger === "string" && typeof candidate.action === "string"
+            ? mapContinuousLearningInstinct({ instinct: candidate, workspaceId: this.workspaceId, sessionId: this.sessionId })
+            : mapContinuousLearningFact({ fact: candidate, workspaceId: this.workspaceId, sessionId: this.sessionId }));
+        }
+        return items;
+      }
+      case "lapis":
+        return records.map((record) => mapLapisArtifact({ artifact: record as any, workspaceId: this.workspaceId, sessionId: this.sessionId }));
+      default:
+        throw new Error(`Unsupported import source: ${source}`);
+    }
+  }
+
   private localMemories(prompt: string): ObservationRecord[] {
     const byId = new Map<string, ObservationRecord>();
     const query = sanitizeFtsQuery(prompt);
@@ -440,6 +486,18 @@ export class VibeMemoryRuntime {
 
   private listArtifactReferences(): any[] {
     return (this.repository.listArtifactReferences?.({ workspaceId: this.workspaceId, limit: this.settings.codeReferences.maxPerPrompt }) ?? []).slice(0, this.settings.codeReferences.maxPerPrompt);
+  }
+
+  private listRevisionNotes(local: ObservationRecord[]): any[] {
+    if (!this.settings.revision.enabled || !this.repository.listMemoryRevisions) return [];
+    const notes: unknown[] = [];
+    for (const item of local) {
+      for (const revision of this.repository.listMemoryRevisions(item.id) ?? []) {
+        notes.push(revision);
+        if (notes.length >= this.settings.revision.maxPromptItems) return notes as any[];
+      }
+    }
+    return notes as any[];
   }
 
   private enqueueObservation(observation: ObservationInput): void {

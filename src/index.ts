@@ -92,7 +92,8 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
   });
 
   (pi as any).on("tool_execution_end", async (event: any, ctx: HookContext) => {
-    if (!state.runtime || state.settings?.codeReferences.captureFromToolResults === false) return;
+    if (!state.runtime || !state.settings || state.settings.codeReferences.captureFromToolResults === false) return;
+    if (!shouldCaptureToolEvent(event, state.settings.captureToolOutput)) return;
     const text = stringifyToolResult(event);
     if (!text) return;
     try {
@@ -160,8 +161,15 @@ function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+function shouldCaptureToolEvent(event: any, mode: NormalizedVibeMemorySettings["captureToolOutput"]): boolean {
+  if (mode === "off") return false;
+  const hasError = Boolean(event?.error ?? event?.isError ?? event?.failed ?? event?.status === "error");
+  if (mode === "errors") return hasError;
+  return mode === "summaries";
+}
+
 function stringifyToolResult(event: any): string | undefined {
-  const value = event?.result ?? event?.output ?? event?.content ?? event?.error;
+  const value = event?.error ?? event?.summary ?? event?.result?.summary ?? event?.output?.summary ?? event?.content;
   if (typeof value === "string") return value;
   if (value == null) return undefined;
   try {

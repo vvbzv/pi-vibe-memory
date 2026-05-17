@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "description": "Local-first Hindsight-integrated memory package for Pi Agents",
   "type": "module",
-  "private": true,
   "keywords": ["pi-package", "pi", "memory", "hindsight"],
   "scripts": {
     "test": "tsx --test tests/**/*.test.ts",
