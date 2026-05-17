@@ -1,0 +1,7 @@
+tests/
+docs/superpowers/plans/2026-05-17-omp-vibe-mem-v1.md
+docs/superpowers/specs/2026-05-17-omp-memory-plugin-design.md
+*.db
+*.db-shm
+*.db-wal
+coverage/
