@@ -28,12 +28,23 @@ Install as a reusable Pi package and enable through Pi package configuration. Ke
     "mode": "owner",
     "hindsight": {
       "enabled": true,
+      "source": "rest",
       "baseUrl": "http://localhost:8888",
-      "bank": "pi"
+      "bank": "pi",
+      "recallScope": "hybrid",
+      "bankWideLimit": 1
     }
   }
 }
 ```
+
+Set `hindsight.source` to `"mcp"` to bootstrap REST settings from Pi's MCP configuration. When enabled, `pi-vibe-memory` reads the configured MCP server (default `hindsight`) from `mcp.json`, derives the REST base URL, bearer token, and default bank from URLs like `http://host:8888/mcp/<bank>/`.
+
+`hindsight.recallScope` controls Hindsight recall:
+
+- `vibeOnly`: recall only memories tagged `pi-vibe-memory`.
+- `bankWide`: recall from the whole configured bank.
+- `hybrid` (default): prefer tagged `pi-vibe-memory` results, then add up to `bankWideLimit` bank-wide results.
 
 ## Token budget behavior
 

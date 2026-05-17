@@ -469,14 +469,39 @@ export class VibeMemoryRuntime {
 
   private async recallHindsight(query: string): Promise<PromptHindsightMemory[]> {
     if (!this.settings.hindsight.enabled || !this.hindsight?.recall) return [];
+
     try {
-      const response = await this.hindsight.recall(this.bankId(), query, {
-        budget: this.settings.hindsight.defaultBudget,
-        limit: this.settings.hindsightRecallLimit,
-      });
-      return parseHindsightMemories(response, this.bankId()).slice(0, this.settings.hindsightRecallLimit);
+      const calls = this.hindsightRecallCalls();
+      const memories: PromptHindsightMemory[] = [];
+      for (const call of calls) {
+        if (call.limit <= 0) continue;
+        const response = await this.hindsight.recall(this.bankId(), query, {
+          budget: this.settings.hindsight.defaultBudget,
+          limit: call.limit,
+          ...(call.tags ? { tags: call.tags } : {}),
+        });
+        memories.push(...parseHindsightMemories(response, this.bankId()).slice(0, call.limit));
+      }
+      return memories.slice(0, this.settings.hindsightRecallLimit);
     } catch {
       return [];
+    }
+  }
+
+  private hindsightRecallCalls(): Array<{ limit: number; tags?: string[] }> {
+    const totalLimit = this.settings.hindsightRecallLimit;
+    switch (this.settings.hindsight.recallScope) {
+      case "vibeOnly":
+        return [{ limit: totalLimit, tags: ["pi-vibe-memory"] }];
+      case "bankWide":
+        return [{ limit: totalLimit }];
+      case "hybrid": {
+        const bankWideLimit = Math.min(this.settings.hindsight.bankWideLimit, totalLimit);
+        return [
+          { limit: totalLimit - bankWideLimit, tags: ["pi-vibe-memory"] },
+          { limit: bankWideLimit },
+        ];
+      }
     }
   }
 

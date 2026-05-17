@@ -1,8 +1,11 @@
+import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 export type VibeMemoryMode = "owner" | "passive" | "toolsOnly";
 export type CaptureToolOutput = "off" | "errors" | "summaries";
 export type HindsightBudget = "low" | "mid" | "high";
+export type HindsightConfigSource = "rest" | "mcp";
+export type HindsightRecallScope = "vibeOnly" | "bankWide" | "hybrid";
 
 export interface NormalizedVibeMemorySettings {
   enabled: boolean;
@@ -43,12 +46,16 @@ export interface NormalizedVibeMemorySettings {
   };
   hindsight: {
     enabled: boolean;
+    source: HindsightConfigSource;
     baseUrl: string;
     apiKeyEnv?: string;
     apiKey?: string;
     bank: string;
     workspaceBank?: string;
     personalBank?: string;
+    mcpServer: string;
+    recallScope: HindsightRecallScope;
+    bankWideLimit: number;
     defaultBudget: HindsightBudget;
     timeoutMs: number;
   };
@@ -114,8 +121,12 @@ export const DEFAULT_SETTINGS: NormalizedVibeMemorySettings = {
   },
   hindsight: {
     enabled: true,
+    source: "rest",
     baseUrl: "http://localhost:8888",
     bank: "pi",
+    mcpServer: "hindsight",
+    recallScope: "hybrid",
+    bankWideLimit: 1,
     defaultBudget: "low",
     timeoutMs: 1500,
   },
@@ -218,6 +229,10 @@ export function normalizeSettings(raw: JsonObject | undefined): NormalizedVibeMe
     hindsight: {
       ...merged.hindsight,
       enabled: merged.hindsight.enabled !== false,
+      source: assertOneOf("hindsight.source", merged.hindsight.source, ["rest", "mcp"]),
+      mcpServer: typeof merged.hindsight.mcpServer === "string" && merged.hindsight.mcpServer.trim() ? merged.hindsight.mcpServer.trim() : "hindsight",
+      recallScope: assertOneOf("hindsight.recallScope", merged.hindsight.recallScope, ["vibeOnly", "bankWide", "hybrid"]),
+      bankWideLimit: assertNonNegativeInteger("hindsight.bankWideLimit", merged.hindsight.bankWideLimit),
       defaultBudget: assertOneOf("hindsight.defaultBudget", merged.hindsight.defaultBudget, ["low", "mid", "high"]),
       timeoutMs: assertPositiveInteger("hindsight.timeoutMs", merged.hindsight.timeoutMs),
     },
@@ -241,13 +256,76 @@ async function readJsonObject(filePath: string): Promise<JsonObject> {
   }
 }
 
-export async function loadVibeMemorySettingsFromFiles(paths: string[]): Promise<NormalizedVibeMemorySettings> {
+export interface LoadVibeMemorySettingsOptions {
+  agentDir?: string;
+  mcpConfigPath?: string;
+}
+
+export async function loadVibeMemorySettingsFromFiles(paths: string[], options: LoadVibeMemorySettingsOptions = {}): Promise<NormalizedVibeMemorySettings> {
   let raw: JsonObject = {};
   for (const filePath of paths) {
     const json = await readJsonObject(filePath);
     raw = mergePlain(raw, isPlainObject(json.vibeMemory) ? json.vibeMemory : {});
   }
-  return normalizeSettings(raw);
+
+  let settings = normalizeSettings(raw);
+  if (settings.hindsight.enabled && settings.hindsight.source === "mcp") {
+    settings = await applyMcpHindsightSettings(settings, options);
+  }
+  return settings;
+}
+
+async function applyMcpHindsightSettings(
+  settings: NormalizedVibeMemorySettings,
+  options: LoadVibeMemorySettingsOptions,
+): Promise<NormalizedVibeMemorySettings> {
+  const mcpPath = options.mcpConfigPath ?? path.join(options.agentDir ?? defaultAgentDir(), "mcp.json");
+  const mcpJson = await readJsonObject(mcpPath);
+  const servers = isPlainObject(mcpJson.mcpServers) ? mcpJson.mcpServers : {};
+  const server = servers[settings.hindsight.mcpServer];
+  if (!isPlainObject(server)) return settings;
+
+  const url = typeof server.url === "string" ? server.url : undefined;
+  const baseUrl = url ? deriveRestBaseUrl(url) : settings.hindsight.baseUrl;
+  const token = extractBearerToken(server.headers);
+  const bankFromPath = url ? deriveBankFromMcpUrl(url) : undefined;
+
+  return {
+    ...settings,
+    hindsight: {
+      ...settings.hindsight,
+      baseUrl,
+      apiKey: token ?? settings.hindsight.apiKey,
+      bank: settings.hindsight.bank === DEFAULT_SETTINGS.hindsight.bank && bankFromPath ? bankFromPath : settings.hindsight.bank,
+    },
+  };
+}
+
+function deriveRestBaseUrl(rawUrl: string): string {
+  const parsed = new URL(rawUrl);
+  const mcpIndex = parsed.pathname.indexOf("/mcp/");
+  parsed.pathname = mcpIndex >= 0 ? parsed.pathname.slice(0, mcpIndex) || "/" : "/";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function deriveBankFromMcpUrl(rawUrl: string): string | undefined {
+  const parsed = new URL(rawUrl);
+  const match = parsed.pathname.match(/\/mcp\/([^/?#]+)\/?$/);
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+}
+
+function extractBearerToken(headers: unknown): string | undefined {
+  if (!isPlainObject(headers)) return undefined;
+  const authorization = headers.Authorization ?? headers.authorization;
+  if (typeof authorization !== "string") return undefined;
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || undefined;
+}
+
+function defaultAgentDir(): string {
+  return process.env.PI_CODING_AGENT_DIR || path.join(process.env.HOME || process.cwd(), ".pi", "agent");
 }
 
 export function detectConflicts(settingsJson: JsonObject): string[] {

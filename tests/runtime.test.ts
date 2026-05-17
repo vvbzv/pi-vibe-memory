@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { normalizeSettings } from "../src/config.js";
 import { VibeMemoryRuntime } from "../src/runtime.js";
 
-function settings(overrides = {}) {
+function settings(overrides: Record<string, unknown> = {}) {
   return normalizeSettings({
-    ...overrides,
     promptBudgetChars: 5000,
     localObservationLimit: 3,
     hindsightRecallLimit: 2,
     meditation: { minObservations: 1, minIntervalMinutes: 1, timeoutMs: 50, maxCandidates: 3 },
     instincts: { minEvidence: 1, maxPromptItems: 2 },
+    ...overrides,
   });
 }
 
@@ -70,9 +70,59 @@ test("beforeAgentStart appends one untrusted memory block from local and Hindsig
   assert.match(result.systemPrompt, /Search hit/);
   assert.match(result.systemPrompt, /Runtime file/);
   assert.match(result.systemPrompt, /Hindsight memory/);
-  assert.equal(hindsightCalls.length, 1);
+  assert.equal(hindsightCalls.length, 2);
   assert.equal(hindsightCalls[0].bank, "pi");
-  assert.equal(hindsightCalls[0].options.limit, 2);
+  assert.deepEqual(hindsightCalls[0].options.tags, ["pi-vibe-memory"]);
+  assert.equal(hindsightCalls[0].options.limit, 1);
+  assert.equal(hindsightCalls[1].bank, "pi");
+  assert.equal(hindsightCalls[1].options.tags, undefined);
+  assert.equal(hindsightCalls[1].options.limit, 1);
+});
+
+test("beforeAgentStart honors vibeOnly recall scope with tagged Hindsight recall", async () => {
+  const calls: any[] = [];
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ hindsightRecallLimit: 4, hindsight: { recallScope: "vibeOnly" } }),
+    repository: new FakeRepository(),
+    hindsight: {
+      recall: async (_bank: string, _query: string, options: any) => {
+        calls.push(options);
+        return { memories: [{ id: "hs1", content: "Tagged memory", tags: options.tags }] };
+      },
+    },
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  const recalled = await runtime.recall({ query: "KISS" }) as any[];
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].tags, ["pi-vibe-memory"]);
+  assert.equal(calls[0].limit, 4);
+  assert.equal(recalled.length, 1);
+});
+
+test("beforeAgentStart honors bankWide recall scope without tags", async () => {
+  const calls: any[] = [];
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ hindsightRecallLimit: 4, hindsight: { recallScope: "bankWide" } }),
+    repository: new FakeRepository(),
+    hindsight: {
+      recall: async (_bank: string, _query: string, options: any) => {
+        calls.push(options);
+        return { memories: [{ id: "hs1", content: "Bank memory", tags: options.tags }] };
+      },
+    },
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  const recalled = await runtime.recall({ query: "KISS" }) as any[];
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].tags, undefined);
+  assert.equal(calls[0].limit, 4);
+  assert.equal(recalled.length, 1);
 });
 
 test("beforeAgentStart returns original prompt when injection is passive, toolsOnly, disabled, or empty", async () => {
@@ -86,6 +136,32 @@ test("beforeAgentStart returns original prompt when injection is passive, toolsO
 
   const empty = new VibeMemoryRuntime({ settings: settings(), repository: new FakeRepository(), workspaceId: "ws1", sessionId: "s1" });
   assert.deepEqual(await empty.beforeAgentStart({ prompt: "p", systemPrompt: "s" }), { prompt: "p", systemPrompt: "s" });
+});
+
+test("beforeAgentStart hybrid recall prefers tagged vibe memories and adds one bank-wide memory", async () => {
+  const repository = new FakeRepository();
+  const calls: any[] = [];
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ localObservationLimit: 1, hindsightRecallLimit: 4, hindsight: { recallScope: "hybrid", bankWideLimit: 1 } }),
+    repository,
+    hindsight: {
+      recall: async (_bank: string, _query: string, options: any) => {
+        calls.push(options);
+        return { memories: [{ id: `hs${calls.length}`, content: `memory ${calls.length}`, tags: options.tags ?? ["general"] }] };
+      },
+    },
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  const recalled = await runtime.recall({ query: "KISS" }) as any[];
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].tags, ["pi-vibe-memory"]);
+  assert.equal(calls[0].limit, 3);
+  assert.equal(calls[1].tags, undefined);
+  assert.equal(calls[1].limit, 1);
+  assert.equal(recalled.length, 2);
 });
 
 test("beforeAgentStart degrades to local memory when Hindsight recall fails", async () => {
