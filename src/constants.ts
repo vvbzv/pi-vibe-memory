@@ -31,6 +31,7 @@ export const TOOL_NAMES = {
   remember: "vibe_memory_remember",
   explain: "vibe_memory_explain",
   status: "vibe_memory_status",
+  stats: "vibe_memory_stats",
   sync: "vibe_memory_sync",
   import: "vibe_memory_import",
   meditate: "vibe_memory_meditate",
@@ -43,6 +44,7 @@ export const TOOL_NAMES = {
 
 export const COMMAND_NAMES = {
   status: "vibe-memory-status",
+  stats: "vibe-memory-stats",
   view: "vibe-memory-view",
   sync: "vibe-memory-sync",
   import: "vibe-memory-import",

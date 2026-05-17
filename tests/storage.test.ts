@@ -232,6 +232,38 @@ test("repository scoped observation approval persists status, scope, tags and qu
   } finally { db.close(); }
 });
 
+test("repository returns compact memory stats", async () => {
+  const db = openVibeMemoryDb(await tempDbPath());
+  try {
+    const repo = new VibeMemoryRepository(db);
+    repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
+    repo.startSession({ id: "s1", workspaceId: "ws1" });
+    repo.appendRawEvent({ id: "raw1", sessionId: "s1", kind: "turn_end", content: { ok: true } });
+    repo.addObservation({ id: "active1", workspaceId: "ws1", kind: "project_fact", scope: "project", title: "Active", content: "Active memory", status: "active" });
+    repo.addObservation({ id: "review1", workspaceId: "ws1", kind: "project_decision", scope: "project", title: "Review", content: "Needs review", status: "needs_review" });
+    repo.addObservation({ id: "old1", workspaceId: "ws1", kind: "project_fact", scope: "project", title: "Old", content: "Old memory", status: "superseded" });
+    repo.addInstinctCandidate({ id: "inst1", workspaceId: "ws1", kind: "behavior_instinct", content: "Use tests.", status: "needs_review" });
+    repo.upsertArtifactReference({ id: "art1", workspaceId: "ws1", path: "src/runtime.ts", artifactType: "code_reference" });
+    repo.recordMemoryRevision({ id: "rev1", oldObservationId: "old1", newObservationId: "active1", relation: "supersedes", reason: "Newer fact" });
+    repo.enqueueSyncJob({ id: "sync1", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "x" }] } });
+    repo.markSyncJobFailed("sync1", "temporary offline");
+
+    const stats = repo.getStats("ws1");
+    assert.equal(stats.observations.total, 3);
+    assert.equal(stats.observations.activeLike, 2);
+    assert.equal(stats.observations.needsReview, 1);
+    assert.equal(stats.observations.byKind.project_fact, 2);
+    assert.equal(stats.instincts.needsReview, 1);
+    assert.equal(stats.artifacts.total, 1);
+    assert.equal(stats.revisions.total, 1);
+    assert.equal(stats.rawEvents.total, 1);
+    assert.equal(stats.sync.pending, 1);
+    assert.equal(stats.sync.failed, 1);
+  } finally {
+    db.close();
+  }
+});
+
 test("artifact references dedupe path-only rows", async () => {
   const db = openVibeMemoryDb(await tempDbPath());
   try {

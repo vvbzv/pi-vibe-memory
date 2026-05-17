@@ -142,7 +142,8 @@ All tools use the `vibe_memory_*` namespace to avoid collisions with Pi, Hindsig
 | `vibe_memory_recall` | Return local/Hindsight memory as untrusted reference data. |
 | `vibe_memory_remember` | Store explicit durable memory when confirmation flags are supplied. |
 | `vibe_memory_explain` | Explain active, superseded, and revision-linked memory. |
-| `vibe_memory_status` | Show runtime and store status. |
+| `vibe_memory_status` | Show concise runtime status. |
+| `vibe_memory_stats` | Show readable counts proving capture, review, sync, and compaction are working. |
 | `vibe_memory_sync` | Flush queued Hindsight retain jobs. |
 | `vibe_memory_import` | Preview or explicitly apply supported migration imports. |
 | `vibe_memory_meditate` | Generate bounded same-session candidate reflections. |
@@ -157,6 +158,7 @@ Persistent writes and revisions require explicit confirmation flags. There are n
 ## Commands
 
 - `/vibe-memory-status`
+- `/vibe-memory-stats`
 - `/vibe-memory-view`
 - `/vibe-memory-sync`
 - `/vibe-memory-import`

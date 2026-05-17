@@ -111,6 +111,36 @@ test("import tool prepares JSON-ish string records from weaker models", async ()
 });
 
 
+test("stats tool and command show readable health counters", async () => {
+  const stats = {
+    status: "owner",
+    storage: {
+      observations: { total: 4, activeLike: 3, needsReview: 1 },
+      instincts: { total: 2, needsReview: 1 },
+      artifacts: { total: 5 },
+      revisions: { total: 1 },
+      rawEvents: { total: 7 },
+    },
+    sync: { pending: 1, failed: 0, hindsight: "enabled" },
+    review: { observations: 1, instincts: 1 },
+    compaction: { mode: "owner", ownerActive: true },
+    promptBudget: { chars: 3500, localObservationLimit: 6, hindsightRecallLimit: 4 },
+    health: { conflicts: 0, injectionDisabled: false },
+  };
+  const [statsTool] = buildToolDefinitions(() => ({ stats: async () => stats })).filter((tool) => tool.name === TOOL_NAMES.stats);
+  const result = await statsTool.execute("call1", {}, new AbortController().signal);
+  assert.match(result.content[0].text, /pi-vibe-memory stats: owner/);
+  assert.match(result.content[0].text, /4 observations/);
+  assert.match(result.content[0].text, /1 pending, 0 failed/);
+  assert.match(result.content[0].text, /compaction: owner owner-active/);
+
+  const notifications: string[] = [];
+  const commands = new Map<string, { handler: (args: string, ctx: { ui?: { notify?: (message: string) => void } }) => Promise<void> }>();
+  registerVibeMemoryCommands({ registerCommand: (name, definition) => commands.set(name, definition) }, () => ({ stats: async () => stats }));
+  await commands.get(COMMAND_NAMES.stats)!.handler("", { ui: { notify: (message) => notifications.push(message) } });
+  assert.match(notifications[0] ?? "", /memory: 4 observations, 2 instincts, 2 needs review/);
+});
+
 test("typed memory and review tool schemas expose safe filters and actions", async () => {
   const tools = buildToolDefinitions(() => ({ review: async (params) => ({ status: "ok", params }) }));
   const remember = tools.find((tool) => tool.name === TOOL_NAMES.remember)!;

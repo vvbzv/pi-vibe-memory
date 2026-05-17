@@ -18,6 +18,11 @@ export function registerVibeMemoryCommands(pi: Registrar, getRuntime: RuntimeGet
     notify(ctx, `pi-vibe-memory: ${formatBrief(result)}`);
   });
 
+  register(pi, COMMAND_NAMES.stats, "Show pi-vibe-memory stats", async (_args, ctx) => {
+    const result = await callRuntime(getRuntime(), "stats", {}, "stats unavailable");
+    notify(ctx, formatStats(result));
+  });
+
   register(pi, COMMAND_NAMES.view, "Show recent pi-vibe-memory references", async (_args, ctx) => {
     const result = await callRuntime(getRuntime(), "recall", { query: "recent", limit: 5 }, "no memory available");
     notify(ctx, `pi-vibe-memory references (untrusted): ${formatBrief(result)}`);
@@ -79,6 +84,18 @@ function notify(ctx: CommandContext, message: string, level: "info" | "warning" 
   ctx.ui?.notify?.(message, level);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
+}
+
+function num(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 function formatBrief(value: unknown): string {
   if (value == null) return "none";
   if (typeof value === "string") return value;
@@ -90,6 +107,24 @@ function formatBrief(value: unknown): string {
     if (typeof record.ok === "boolean") return record.ok ? "ok" : "issues found";
   }
   return String(value);
+}
+
+function formatStats(result: unknown): string {
+  if (!isRecord(result)) return `pi-vibe-memory stats: ${formatBrief(result)}`;
+  const storage = isRecord(result.storage) ? result.storage : {};
+  const observations = isRecord(storage.observations) ? storage.observations : {};
+  const instincts = isRecord(storage.instincts) ? storage.instincts : {};
+  const sync = isRecord(result.sync) ? result.sync : {};
+  const review = isRecord(result.review) ? result.review : {};
+  const compaction = isRecord(result.compaction) ? result.compaction : {};
+  const promptBudget = isRecord(result.promptBudget) ? result.promptBudget : {};
+  return [
+    `pi-vibe-memory stats: ${stringValue(result.status) ?? "unknown"}`,
+    `memory: ${num(observations.total)} observations, ${num(instincts.total)} instincts, ${num(review.observations) + num(review.instincts)} needs review`,
+    `sync: ${num(sync.pending)} pending, ${num(sync.failed)} failed, Hindsight ${stringValue(sync.hindsight) ?? "unknown"}`,
+    `compaction: ${stringValue(compaction.mode) ?? "unknown"}${compaction.ownerActive === true ? " owner-active" : ""}`,
+    `prompt budget: ${num(promptBudget.chars)} chars`,
+  ].join("\n");
 }
 
 function formatDoctor(result: unknown): string {

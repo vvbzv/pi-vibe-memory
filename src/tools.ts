@@ -10,6 +10,7 @@ export type VibeMemoryRuntime = {
   remember?: RuntimeMethod;
   explain?: RuntimeMethod;
   status?: RuntimeMethod;
+  stats?: RuntimeMethod;
   sync?: RuntimeMethod;
   import?: RuntimeMethod;
   meditate?: RuntimeMethod;
@@ -58,6 +59,10 @@ export function buildToolDefinitions(getRuntime: () => VibeMemoryRuntime | undef
     tool(TOOL_NAMES.status, "Vibe Memory Status", "Show concise pi-vibe-memory status.", schema({}), async (params) => {
       const result = await callRuntime(getRuntime(), "status", params, { status: "unknown" });
       return textResult(`pi-vibe-memory status: ${formatUnknown(result, "unknown")}`, { status: "ok", result });
+    }),
+    tool(TOOL_NAMES.stats, "Vibe Memory Stats", "Show readable memory activity stats to verify pi-vibe-memory is working.", schema({}), async (params) => {
+      const result = await callRuntime(getRuntime(), "stats", params, { status: "not-configured" });
+      return textResult(formatStats(result), { status: "ok", result });
     }),
     tool(TOOL_NAMES.sync, "Sync Vibe Memory", "Flush pending pi-vibe-memory sync jobs.", schema({}), async (params) => {
       const result = await callRuntime(getRuntime(), "sync", params, { status: "not-configured" });
@@ -132,12 +137,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
+function formatStats(result: unknown): string {
+  if (!isRecord(result)) return `pi-vibe-memory stats: ${formatUnknown(result, "not available")}`;
+  const storage = isRecord(result.storage) ? result.storage : {};
+  const observations = isRecord(storage.observations) ? storage.observations : {};
+  const instincts = isRecord(storage.instincts) ? storage.instincts : {};
+  const sync = isRecord(result.sync) ? result.sync : {};
+  const review = isRecord(result.review) ? result.review : {};
+  const compaction = isRecord(result.compaction) ? result.compaction : {};
+  const promptBudget = isRecord(result.promptBudget) ? result.promptBudget : {};
+  const health = isRecord(result.health) ? result.health : {};
+  return [
+    `pi-vibe-memory stats: ${stringValue(result.status) ?? "unknown"}`,
+    `memory: ${num(observations.total)} observations (${num(observations.activeLike)} active-like, ${num(observations.needsReview)} needs-review), ${num(instincts.total)} instincts (${num(instincts.needsReview)} needs-review)`,
+    `storage: ${num(nested(storage, "artifacts", "total"))} code/doc refs, ${num(nested(storage, "revisions", "total"))} revisions, ${num(nested(storage, "rawEvents", "total"))} captured events`,
+    `sync: ${num(sync.pending)} pending, ${num(sync.failed)} failed, Hindsight ${stringValue(sync.hindsight) ?? "unknown"}`,
+    `review: ${num(review.observations) + num(review.instincts)} pending total`,
+    `compaction: ${stringValue(compaction.mode) ?? "unknown"}${compaction.ownerActive === true ? " owner-active" : ""}`,
+    `prompt budget: ${num(promptBudget.chars)} chars, local ${num(promptBudget.localObservationLimit)}, Hindsight ${num(promptBudget.hindsightRecallLimit)}`,
+    `health: ${num(health.conflicts)} conflicts${health.injectionDisabled === true ? ", injection disabled" : ""}${stringValue(health.lastMeditationError) ? `, meditation error: ${stringValue(health.lastMeditationError)}` : ""}`,
+  ].join("\n");
+}
+
 function formatDoctor(result: unknown): string {
   const doctor = result as Partial<DoctorResult> | undefined;
   if (!doctor || !Array.isArray(doctor.checks)) return `pi-vibe-memory doctor: ${formatUnknown(result, "not available")}`;
   const summary = doctor.ok === false ? "issues found" : "ok";
   const lines = doctor.checks.map((check) => `${check.name}: ${check.status} - ${check.message}`);
   return [`pi-vibe-memory doctor: ${summary}`, ...lines].join("\n");
+}
+
+function nested(value: unknown, ...path: string[]): unknown {
+  let current = value;
+  for (const key of path) {
+    if (!isRecord(current)) return undefined;
+    current = current[key];
+  }
+  return current;
+}
+
+function num(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function formatUnknown(value: unknown, empty: string): string {

@@ -155,6 +155,27 @@ export interface MemoryRevisionRecord extends MemoryRevisionInput {
   createdAt: string;
 }
 
+export interface MemoryStats {
+  observations: {
+    total: number;
+    byStatus: Record<string, number>;
+    byKind: Record<string, number>;
+    byScope: Record<string, number>;
+    activeLike: number;
+    needsReview: number;
+  };
+  instincts: {
+    total: number;
+    byStatus: Record<string, number>;
+    needsReview: number;
+  };
+  artifacts: { total: number };
+  revisions: { total: number };
+  rawEvents: { total: number };
+  sync: { pending: number; failed: number };
+  meditation: { total: number; failed: number };
+}
+
 const PROMPT_OBSERVATION_STATUSES: MemoryStatus[] = ["active", "working", "needs_review"];
 const PROMPT_INSTINCT_STATUSES: MemoryStatus[] = ["active", "working", "needs_review"];
 
@@ -558,6 +579,80 @@ export class VibeMemoryRepository {
     const row = this.db.prepare("SELECT value_json FROM repository_metadata WHERE key = ?").get(key) as { value_json: string } | undefined;
     return row ? parseJson(row.value_json) : undefined;
   }
+
+  getStats(workspaceId: string): MemoryStats {
+    const observationRows = this.db.prepare(`
+      SELECT status, kind, scope, COUNT(*) AS count
+      FROM observations
+      WHERE workspace_id = @workspaceId
+      GROUP BY status, kind, scope
+    `).all({ workspaceId }) as Array<{ status: string; kind: string; scope: string; count: number }>;
+    const instinctRows = this.db.prepare(`
+      SELECT status, COUNT(*) AS count
+      FROM instinct_candidates
+      WHERE workspace_id = @workspaceId
+      GROUP BY status
+    `).all({ workspaceId }) as Array<{ status: string; count: number }>;
+    const artifacts = countOne(this.db.prepare("SELECT COUNT(*) AS count FROM artifact_references WHERE workspace_id = ?").get(workspaceId));
+    const revisions = countOne(this.db.prepare(`
+      SELECT COUNT(DISTINCT r.id) AS count
+      FROM memory_revisions r
+      JOIN observations o ON o.id = r.old_observation_id OR o.id = r.new_observation_id
+      WHERE o.workspace_id = @workspaceId
+    `).get({ workspaceId }));
+    const rawEvents = countOne(this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM raw_events e
+      JOIN sessions s ON s.id = e.session_id
+      WHERE s.workspace_id = @workspaceId
+    `).get({ workspaceId }));
+    const pendingSync = countOne(this.db.prepare("SELECT COUNT(*) AS count FROM sync_queue").get());
+    const failedSync = countOne(this.db.prepare("SELECT COUNT(*) AS count FROM sync_queue WHERE attempts > 0 OR last_error IS NOT NULL").get());
+    const meditationTotal = countOne(this.db.prepare("SELECT COUNT(*) AS count FROM meditation_runs WHERE workspace_id = ?").get(workspaceId));
+    const meditationFailed = countOne(this.db.prepare("SELECT COUNT(*) AS count FROM meditation_runs WHERE workspace_id = ? AND status = 'failed'").get(workspaceId));
+
+    const observations = {
+      total: 0,
+      byStatus: {} as Record<string, number>,
+      byKind: {} as Record<string, number>,
+      byScope: {} as Record<string, number>,
+      activeLike: 0,
+      needsReview: 0,
+    };
+    for (const row of observationRows) {
+      observations.total += row.count;
+      increment(observations.byStatus, row.status, row.count);
+      increment(observations.byKind, row.kind, row.count);
+      increment(observations.byScope, row.scope, row.count);
+      if (PROMPT_OBSERVATION_STATUSES.includes(row.status as MemoryStatus)) observations.activeLike += row.count;
+      if (row.status === "needs_review") observations.needsReview += row.count;
+    }
+
+    const instincts = { total: 0, byStatus: {} as Record<string, number>, needsReview: 0 };
+    for (const row of instinctRows) {
+      instincts.total += row.count;
+      increment(instincts.byStatus, row.status, row.count);
+      if (row.status === "needs_review") instincts.needsReview += row.count;
+    }
+
+    return {
+      observations,
+      instincts,
+      artifacts: { total: artifacts },
+      revisions: { total: revisions },
+      rawEvents: { total: rawEvents },
+      sync: { pending: pendingSync, failed: failedSync },
+      meditation: { total: meditationTotal, failed: meditationFailed },
+    };
+  }
+}
+
+function countOne(row: unknown): number {
+  return row != null && typeof row === "object" && "count" in row ? Number((row as { count: unknown }).count) || 0 : 0;
+}
+
+function increment(target: Record<string, number>, key: string, count: number): void {
+  target[key] = (target[key] ?? 0) + count;
 }
 
 function uniqueStrings(values: string[]): string[] {

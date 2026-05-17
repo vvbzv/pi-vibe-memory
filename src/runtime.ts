@@ -39,6 +39,7 @@ export interface RuntimeRepository {
   listReviewObservations?(options: { workspaceId: string; limit?: number; kind?: string }): ObservationRecord[];
   listArtifactReferences?(options: { workspaceId: string; limit?: number }): unknown[];
   listPendingSyncJobs?(limit?: number): unknown[];
+  getStats?(workspaceId: string): unknown;
   markSyncJobDone?(id: string): void;
   markSyncJobFailed?(id: string, error: string): void;
   getObservation?(id: string): ObservationRecord | undefined;
@@ -385,6 +386,38 @@ export class VibeMemoryRuntime {
       conflicts: this.conflicts,
       pendingSyncJobs: this.repository.listPendingSyncJobs?.(this.settings.sync.maxBatchItems).length ?? 0,
       lastMeditationError: this.lastMeditationError,
+    };
+  }
+
+  async stats(): Promise<JsonRecord> {
+    const stats = isRecord(this.repository.getStats?.(this.workspaceId)) ? this.repository.getStats?.(this.workspaceId) as JsonRecord : {};
+    return {
+      status: this.settings.enabled ? this.settings.mode : "disabled",
+      workspaceId: this.workspaceId,
+      sessionId: this.sessionId,
+      storage: stats,
+      sync: {
+        ...(isRecord(stats.sync) ? stats.sync : {}),
+        hindsight: this.settings.hindsight.enabled ? "enabled" : "disabled",
+      },
+      review: {
+        observations: nestedNumber(stats, ["observations", "needsReview"]),
+        instincts: nestedNumber(stats, ["instincts", "needsReview"]),
+      },
+      compaction: {
+        mode: this.settings.compaction.enabled ? this.settings.compaction.mode : "off",
+        ownerActive: this.settings.enabled && this.settings.mode === "owner" && this.settings.compaction.enabled && this.settings.compaction.mode === "owner" && this.conflicts.length === 0,
+      },
+      promptBudget: {
+        chars: this.settings.promptBudgetChars,
+        localObservationLimit: this.settings.localObservationLimit,
+        hindsightRecallLimit: this.settings.hindsightRecallLimit,
+      },
+      health: {
+        conflicts: this.conflicts.length,
+        lastMeditationError: this.lastMeditationError,
+        injectionDisabled: this.injectionDisabled,
+      },
     };
   }
 
@@ -812,6 +845,15 @@ function extractText(value: unknown): string {
 
 function numberParam(value: unknown, fallback: number): number {
   return Number.isInteger(value) && Number(value) > 0 ? Number(value) : fallback;
+}
+
+function nestedNumber(value: unknown, path: string[]): number {
+  let current = value;
+  for (const key of path) {
+    if (!isRecord(current)) return 0;
+    current = current[key];
+  }
+  return typeof current === "number" && Number.isFinite(current) ? current : 0;
 }
 
 function requiredString(value: unknown, name: string): string {
