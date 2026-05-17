@@ -187,3 +187,63 @@ test("commands use vibe-memory namespace and fake registrar", () => {
     assert.match(command, /^vibe-memory-/);
   }
 });
+
+test("import command parses source and supported flags", async () => {
+  let importParams: Record<string, unknown> | undefined;
+  const commands = new Map<string, { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }>();
+  const pi = {
+    registerCommand(name: string, definition: { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }) {
+      commands.set(name, definition);
+    },
+  };
+
+  registerVibeMemoryCommands(pi, () => ({
+    import: async (params) => {
+      importParams = params;
+      return { status: "preview" };
+    },
+  }));
+
+  await commands.get(COMMAND_NAMES.import)!.handler("continuous-learning --dry-run --explicit --path /tmp/legacy", {});
+
+  assert.deepEqual(importParams, {
+    source: "continuous-learning",
+    dryRun: true,
+    explicit: true,
+    path: "/tmp/legacy",
+  });
+
+  await commands.get(COMMAND_NAMES.import)!.handler("continuous-learning --apply --path=/tmp/applied", {});
+
+  assert.deepEqual(importParams, {
+    source: "continuous-learning",
+    dryRun: false,
+    path: "/tmp/applied",
+  });
+});
+
+test("import command rejects unsupported flags without calling runtime", async () => {
+  let called = false;
+  const notifications: Array<{ message: string; level?: string }> = [];
+  const commands = new Map<string, { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }>();
+  const pi = {
+    registerCommand(name: string, definition: { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }) {
+      commands.set(name, definition);
+    },
+  };
+
+  registerVibeMemoryCommands(pi, () => ({
+    import: async () => {
+      called = true;
+      return { status: "preview" };
+    },
+  }));
+
+  await commands.get(COMMAND_NAMES.import)!.handler("continuous-learning --unknown", {
+    ui: { notify: (message, level) => notifications.push({ message, level }) },
+  });
+
+  assert.equal(called, false);
+  assert.equal(notifications[0]?.level, "error");
+  assert.match(notifications[0]?.message ?? "", /Unsupported flag: --unknown/);
+});

@@ -146,3 +146,21 @@ test("runDoctorChecks blocks legacy uninstall readiness when migration status is
   assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "warn");
   assert.ok(result.legacyRemovalAdvice.some((item) => item.includes("Run /vibe-memory-import continuous-learning --dry-run")));
 });
+
+test("runDoctorChecks blocks legacy uninstall readiness after preview-only migration", () => {
+  const result = runDoctorChecks({
+    settings: DEFAULT_SETTINGS,
+    conflicts: [],
+    database: { status: "ok", message: "SQLite reachable" },
+    toolNames: Object.values(TOOL_NAMES),
+    commandNames: Object.values(COMMAND_NAMES),
+    migrationStatus: {
+      continuousLearning: { dryRunCompleted: true, applied: false, needsReview: 0 },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.safeToUninstallLegacy, false);
+  assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "warn");
+  assert.ok(result.legacyRemovalAdvice.some((item) => item.includes("apply the import explicitly")));
+});

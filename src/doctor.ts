@@ -90,11 +90,11 @@ function missingNames(required: readonly string[], available: readonly string[] 
   return required.filter((name) => !names.has(name));
 }
 
-function hasKnownMigrationStatus(migrationStatus: MigrationStatusInput | undefined): boolean {
+function hasAppliedMigrationStatus(migrationStatus: MigrationStatusInput | undefined): boolean {
   const continuousLearning = migrationStatus?.continuousLearning;
   if (!continuousLearning) return false;
-  if (continuousLearning.dryRunCompleted === true || continuousLearning.applied === true) return true;
-  return typeof continuousLearning.status === "string" && ["preview", "imported", "complete", "completed"].includes(continuousLearning.status);
+  if (continuousLearning.applied === true) return true;
+  return typeof continuousLearning.status === "string" && ["imported", "complete", "completed"].includes(continuousLearning.status);
 }
 
 function checkLegacyReplacementReadiness(input: DoctorInput): { check: DoctorCheck; safeToUninstallLegacy: boolean; legacyRemovalAdvice: string[] } {
@@ -114,8 +114,8 @@ function checkLegacyReplacementReadiness(input: DoctorInput): { check: DoctorChe
   if ((input.conflicts ?? []).length > 0) blockers.push("Resolve competing memory owners before removing legacy packages.");
   if (input.database?.status !== "ok") blockers.push("Run doctor with a passing database health probe.");
 
-  const migrationKnown = hasKnownMigrationStatus(input.migrationStatus);
-  if (!migrationKnown) advice.push("Run /vibe-memory-import continuous-learning --dry-run, then apply the import explicitly when the preview is correct.");
+  const migrationApplied = hasAppliedMigrationStatus(input.migrationStatus);
+  if (!migrationApplied) advice.push("Run /vibe-memory-import continuous-learning --dry-run, then apply the import explicitly when the preview is correct.");
 
   if (blockers.length > 0) {
     return {

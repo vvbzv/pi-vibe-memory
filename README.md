@@ -98,6 +98,7 @@ All tools are namespaced to avoid collisions:
 - `vibe_memory_sync`
 - `vibe_memory_import`
 - `vibe_memory_meditate`
+- `vibe_memory_review`
 - `vibe_memory_review_instincts`
 - `vibe_memory_compare`
 - `vibe_memory_revise`
@@ -112,6 +113,7 @@ Persistent writes and revisions require explicit confirmation flags. There are n
 - `/vibe-memory-sync`
 - `/vibe-memory-import`
 - `/vibe-memory-meditate`
+- `/vibe-memory-review`
 - `/vibe-memory-review-instincts`
 - `/vibe-memory-disable-injection`
 - `/vibe-memory-doctor`

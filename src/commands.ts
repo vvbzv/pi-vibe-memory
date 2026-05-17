@@ -29,8 +29,14 @@ export function registerVibeMemoryCommands(pi: Registrar, getRuntime: RuntimeGet
   });
 
   register(pi, COMMAND_NAMES.import, "Preview pi-vibe-memory legacy import", async (args, ctx) => {
-    const result = await callRuntime(getRuntime(), "import", { source: args.trim(), dryRun: true }, "import preview unavailable");
-    notify(ctx, `pi-vibe-memory import preview: ${formatBrief(result)}`);
+    const parsed = parseImportArgs(args);
+    if ("error" in parsed) {
+      notify(ctx, parsed.error, "error");
+      return;
+    }
+
+    const result = await callRuntime(getRuntime(), "import", parsed.params, "import preview unavailable");
+    notify(ctx, `pi-vibe-memory import ${parsed.params.dryRun === false ? "result" : "preview"}: ${formatBrief(result)}`);
   });
 
   register(pi, COMMAND_NAMES.meditate, "Run pi-vibe-memory meditation", async (_args, ctx) => {
@@ -89,4 +95,38 @@ function formatBrief(value: unknown): string {
 function parseReviewArgs(args: string): Record<string, unknown> {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   return { action: parts[0] ?? "list", id: parts[1] };
+}
+
+function parseImportArgs(args: string): { params: Record<string, unknown> } | { error: string } {
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  const [source, ...flags] = parts;
+  if (!source) return { error: "Usage: /vibe-memory-import <source> [--dry-run|--apply] [--explicit] [--path <path>|--path=<path>]" };
+
+  const params: Record<string, unknown> = { source, dryRun: true };
+
+  for (let index = 0; index < flags.length; index += 1) {
+    const flag = flags[index];
+    if (flag === "--dry-run") {
+      params.dryRun = true;
+    } else if (flag === "--apply") {
+      params.dryRun = false;
+    } else if (flag === "--explicit") {
+      params.explicit = true;
+    } else if (flag === "--path") {
+      const value = flags[index + 1];
+      if (!value || value.startsWith("--")) return { error: "Missing value for --path." };
+      params.path = value;
+      index += 1;
+    } else if (flag.startsWith("--path=")) {
+      const value = flag.slice("--path=".length);
+      if (!value) return { error: "Missing value for --path." };
+      params.path = value;
+    } else if (flag.startsWith("--")) {
+      return { error: `Unsupported flag: ${flag}. Supported flags: --dry-run, --apply, --explicit, --path.` };
+    } else {
+      return { error: `Unexpected argument: ${flag}. Source must be the first token.` };
+    }
+  }
+
+  return { params };
 }
