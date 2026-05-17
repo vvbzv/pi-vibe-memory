@@ -48,6 +48,60 @@ test("normalizeSettings rejects invalid numbers and modes", () => {
   assert.throws(() => normalizeSettings({ revision: { maxPromptItems: 0 } }), /revision\.maxPromptItems/);
 });
 
+test("normalizeSettings enables owner compaction by default", () => {
+  const settings = normalizeSettings({});
+
+  assert.deepEqual(settings.compaction, {
+    enabled: true,
+    mode: "owner",
+    maxSummaryChars: 8000,
+    maxObservations: 8,
+    maxInstincts: 4,
+    maxFacts: 6,
+    maxArtifacts: 6,
+    maxRevisions: 3,
+    includePreviousSummary: true,
+    includeFileOps: true,
+    failOpen: true,
+  });
+});
+
+test("normalizeSettings validates compaction settings", () => {
+  const settings = normalizeSettings({
+    compaction: {
+      enabled: false,
+      mode: "observe",
+      maxSummaryChars: 1200,
+      maxObservations: 2,
+      maxInstincts: 1,
+      maxFacts: 3,
+      maxArtifacts: 4,
+      maxRevisions: 1,
+      includePreviousSummary: false,
+      includeFileOps: false,
+      failOpen: false,
+    },
+  });
+
+  assert.equal(settings.compaction.enabled, false);
+  assert.equal(settings.compaction.mode, "observe");
+  assert.equal(settings.compaction.maxSummaryChars, 1200);
+  assert.equal(settings.compaction.maxObservations, 2);
+  assert.equal(settings.compaction.maxInstincts, 1);
+  assert.equal(settings.compaction.maxFacts, 3);
+  assert.equal(settings.compaction.maxArtifacts, 4);
+  assert.equal(settings.compaction.maxRevisions, 1);
+  assert.equal(settings.compaction.includePreviousSummary, false);
+  assert.equal(settings.compaction.includeFileOps, false);
+  assert.equal(settings.compaction.failOpen, false);
+
+  assert.throws(() => normalizeSettings({ compaction: { mode: "passive" } }), /compaction\.mode/);
+  assert.throws(() => normalizeSettings({ compaction: { maxSummaryChars: 0 } }), /compaction\.maxSummaryChars/);
+  assert.throws(() => normalizeSettings({ compaction: { maxObservations: -1 } }), /compaction\.maxObservations/);
+  assert.throws(() => normalizeSettings({ compaction: { maxInstincts: 1.5 } }), /compaction\.maxInstincts/);
+  assert.throws(() => normalizeSettings({ compaction: { maxFacts: "6" } }), /compaction\.maxFacts/);
+});
+
 test("loadVibeMemorySettingsFromFiles merges project over global", async () => {
   const root = await tempDir();
   const globalPath = path.join(root, "global.json");

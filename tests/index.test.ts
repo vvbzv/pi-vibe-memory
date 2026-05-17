@@ -38,7 +38,7 @@ test("index registers namespaced tools, commands, and lifecycle hooks", () => {
 
   assert.deepEqual(pi.tools.map((tool) => tool.name).sort(), Object.values(TOOL_NAMES).sort());
   assert.deepEqual([...pi.commands.keys()].sort(), Object.values(COMMAND_NAMES).sort());
-  for (const event of ["session_start", "before_agent_start", "turn_end", "tool_execution_end", "session_shutdown"]) {
+  for (const event of ["session_start", "before_agent_start", "session_before_compact", "turn_end", "tool_execution_end", "session_shutdown"]) {
     assert.equal(typeof pi.handlers.get(event), "function", event);
   }
 });
@@ -79,4 +79,26 @@ test("before_agent_start hook returns appended system prompt after local capture
 
   assert.match(result.systemPrompt, /<pi_vibe_memory trust="untrusted">/);
   assert.match(result.systemPrompt, /src\/index.ts/);
+});
+
+test("session_before_compact hook returns owner compaction from local memory", async () => {
+  const root = await tempProject();
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
+    vibeMemory: { dbPath: path.join(root, "memory.db"), hindsight: { enabled: false }, meditation: { mode: "off" }, captureRawPrompts: true },
+  }));
+  const pi = new FakePi();
+  piVibeMemory(pi as any);
+  const ctx = fakeContext(root);
+
+  await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+  await pi.handlers.get("turn_end")?.({ turnIndex: 1, message: { content: "Assistant edited src/index.ts" }, toolResults: [] }, ctx);
+  const result = await pi.handlers.get("session_before_compact")?.({
+    preparation: { firstKeptEntryId: "entry-1", tokensBefore: 200, fileOps: { readFiles: ["src/index.ts"], modifiedFiles: [] } },
+    branchEntries: [],
+  }, ctx);
+
+  assert.equal(result.compaction.firstKeptEntryId, "entry-1");
+  assert.equal(result.compaction.tokensBefore, 200);
+  assert.equal(result.compaction.details.type, "pi-vibe-memory");
+  assert.match(result.compaction.summary, /Pi Vibe Memory Continuity/);
 });

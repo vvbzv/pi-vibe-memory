@@ -273,3 +273,68 @@ test("runtime tool methods are thin, explicit, and non-destructive", async () =>
   assert.equal(repository.revisions[0].oldObservationId, "old");
   assert.equal(repository.revisions[0].relation, "supersedes");
 });
+
+test("beforeCompact returns owner compaction without calling Hindsight", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [
+    { id: "fact1", kind: "project_fact", content: "One memory extension", status: "active" },
+    { id: "dec1", kind: "project_decision", content: "Replace observational-memory", status: "active" },
+  ];
+  repository.promptInstincts = [{ id: "inst1", content: "Write tests first", status: "working", confidence: 0.8 }];
+  repository.promptArtifacts = [{ id: "art1", path: "src/runtime.ts", artifactType: "code_reference" }];
+  repository.revisions = [{ id: "rev1", oldObservationId: "old", newObservationId: "fact1", relation: "supersedes", reason: "New owner mode evidence" }];
+  repository.pendingJobs = [{ id: "sync1" }];
+  let recallCalled = false;
+
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ compaction: { mode: "owner", maxSummaryChars: 2000 } }),
+    repository,
+    hindsight: { recall: async () => { recallCalled = true; return {}; } },
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  const result = await runtime.beforeCompact({
+    preparation: {
+      previousSummary: "## Goal\nBuild memory",
+      firstKeptEntryId: "entry-10",
+      tokensBefore: 12345,
+      fileOps: { readFiles: ["src/runtime.ts"], modifiedFiles: [] },
+    },
+    branchEntries: [],
+  } as any);
+
+  assert.equal(recallCalled, false);
+  assert.equal(result?.compaction.firstKeptEntryId, "entry-10");
+  assert.equal(result?.compaction.tokensBefore, 12345);
+  assert.equal(result?.compaction.details.type, "pi-vibe-memory");
+  assert.equal(result?.compaction.details.version, 1);
+  assert.equal(result?.compaction.details.mode, "owner");
+  assert.equal(result?.compaction.details.source, "sqlite-local");
+  assert.equal(result?.compaction.details.summaryChars, result?.compaction.summary.length);
+  assert.match(result?.compaction.summary ?? "", /Pi Vibe Memory Continuity/);
+  assert.match(result?.compaction.summary ?? "", /One memory extension/);
+  assert.match(result?.compaction.summary ?? "", /Write tests first/);
+});
+
+test("beforeCompact skips disabled, observe mode, and competing compaction owner", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [{ id: "fact1", kind: "project_fact", content: "One memory extension", status: "active" }];
+
+  for (const overrides of [
+    { enabled: false },
+    { compaction: { enabled: false } },
+    { compaction: { mode: "off" } },
+    { compaction: { mode: "observe" } },
+  ]) {
+    const runtime = new VibeMemoryRuntime({ settings: settings(overrides), repository, workspaceId: "ws1", sessionId: "s1" });
+    assert.equal(await runtime.beforeCompact({ preparation: { firstKeptEntryId: "entry", tokensBefore: 1 }, branchEntries: [] } as any), undefined);
+  }
+
+  const runtime = new VibeMemoryRuntime({ settings: settings({ compaction: { mode: "owner" } }), repository, workspaceId: "ws1", sessionId: "s1" });
+  const result = await runtime.beforeCompact({
+    preparation: { firstKeptEntryId: "entry", tokensBefore: 1 },
+    branchEntries: [{ type: "compaction", details: { type: "observational-memory" } }],
+  } as any);
+  assert.equal(result, undefined);
+});

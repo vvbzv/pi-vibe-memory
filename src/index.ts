@@ -75,6 +75,19 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
     return result.systemPrompt === event?.systemPrompt ? undefined : { systemPrompt: result.systemPrompt };
   });
 
+  (pi as any).on("session_before_compact", async (event: any, ctx: HookContext) => {
+    if (!state.runtime) return undefined;
+    try {
+      return await state.runtime.beforeCompact(event);
+    } catch (error) {
+      if (state.settings?.compaction.failOpen !== false) {
+        notify(ctx, `${PACKAGE_NAME}: compaction skipped: ${errorMessage(error)}`, "warn");
+        return undefined;
+      }
+      throw error;
+    }
+  });
+
   (pi as any).on("turn_end", async (event: any, ctx: HookContext) => {
     if (!state.runtime) return;
     try {

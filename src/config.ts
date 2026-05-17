@@ -6,6 +6,7 @@ export type CaptureToolOutput = "off" | "errors" | "summaries";
 export type HindsightBudget = "low" | "mid" | "high";
 export type HindsightConfigSource = "rest" | "mcp";
 export type HindsightRecallScope = "vibeOnly" | "bankWide" | "hybrid";
+export type VibeMemoryCompactionMode = "off" | "observe" | "owner";
 
 export interface NormalizedVibeMemorySettings {
   enabled: boolean;
@@ -18,6 +19,19 @@ export interface NormalizedVibeMemorySettings {
   captureRawPrompts: boolean;
   ignoredPathPatterns: string[];
   strictSingleOwner: boolean;
+  compaction: {
+    enabled: boolean;
+    mode: VibeMemoryCompactionMode;
+    maxSummaryChars: number;
+    maxObservations: number;
+    maxInstincts: number;
+    maxFacts: number;
+    maxArtifacts: number;
+    maxRevisions: number;
+    includePreviousSummary: boolean;
+    includeFileOps: boolean;
+    failOpen: boolean;
+  };
   codeReferences: {
     enabled: boolean;
     maxPerPrompt: number;
@@ -79,6 +93,19 @@ export const DEFAULT_SETTINGS: NormalizedVibeMemorySettings = {
   captureRawPrompts: false,
   ignoredPathPatterns: [],
   strictSingleOwner: false,
+  compaction: {
+    enabled: true,
+    mode: "owner",
+    maxSummaryChars: 8000,
+    maxObservations: 8,
+    maxInstincts: 4,
+    maxFacts: 6,
+    maxArtifacts: 6,
+    maxRevisions: 3,
+    includePreviousSummary: true,
+    includeFileOps: true,
+    failOpen: true,
+  },
   codeReferences: {
     enabled: true,
     maxPerPrompt: 2,
@@ -196,6 +223,20 @@ export function normalizeSettings(raw: JsonObject | undefined): NormalizedVibeMe
     captureRawPrompts: merged.captureRawPrompts === true,
     ignoredPathPatterns: optionalStringArray("ignoredPathPatterns", merged.ignoredPathPatterns),
     strictSingleOwner: merged.strictSingleOwner === true,
+    compaction: {
+      ...merged.compaction,
+      enabled: merged.compaction.enabled !== false,
+      mode: assertOneOf("compaction.mode", merged.compaction.mode, ["off", "observe", "owner"]),
+      maxSummaryChars: assertPositiveInteger("compaction.maxSummaryChars", merged.compaction.maxSummaryChars),
+      maxObservations: assertPositiveInteger("compaction.maxObservations", merged.compaction.maxObservations),
+      maxInstincts: assertPositiveInteger("compaction.maxInstincts", merged.compaction.maxInstincts),
+      maxFacts: assertPositiveInteger("compaction.maxFacts", merged.compaction.maxFacts),
+      maxArtifacts: assertPositiveInteger("compaction.maxArtifacts", merged.compaction.maxArtifacts),
+      maxRevisions: assertPositiveInteger("compaction.maxRevisions", merged.compaction.maxRevisions),
+      includePreviousSummary: merged.compaction.includePreviousSummary !== false,
+      includeFileOps: merged.compaction.includeFileOps !== false,
+      failOpen: merged.compaction.failOpen !== false,
+    },
     codeReferences: {
       ...merged.codeReferences,
       enabled: merged.codeReferences.enabled !== false,

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { extractArtifactReferences } from "./codeReferences.js";
+import { buildCompactionSummary, shouldSkipCustomCompaction } from "./compaction.js";
 import { mapContinuousLearningFact, mapContinuousLearningInstinct } from "./importers/continuousLearning.js";
 import { mapLapisArtifact } from "./importers/lapis.js";
 import { mapObservationalMemoryRecord } from "./importers/observationalMemory.js";
@@ -75,6 +76,31 @@ export interface CaptureTurnEndInput {
   assistantText?: string;
 }
 
+export interface BeforeCompactInput {
+  preparation?: {
+    previousSummary?: string;
+    firstKeptEntryId?: string;
+    tokensBefore?: number;
+    fileOps?: { readFiles?: string[]; modifiedFiles?: string[] };
+  };
+  branchEntries?: unknown[];
+}
+
+export interface BeforeCompactResult {
+  compaction: {
+    summary: string;
+    firstKeptEntryId?: string;
+    tokensBefore?: number;
+    details: {
+      type: "pi-vibe-memory";
+      version: 1;
+      mode: "owner";
+      source: "sqlite-local";
+      summaryChars: number;
+    };
+  };
+}
+
 type JsonRecord = Record<string, unknown>;
 
 type MeditationResult = {
@@ -126,6 +152,59 @@ export class VibeMemoryRuntime {
 
     if (!block) return input;
     return { ...input, systemPrompt: `${input.systemPrompt}\n\n${block}` };
+  }
+
+  async beforeCompact(event: BeforeCompactInput): Promise<BeforeCompactResult | undefined> {
+    if (!this.settings.enabled || !this.settings.compaction.enabled || this.settings.compaction.mode !== "owner") return undefined;
+    if (shouldSkipCustomCompaction(event.branchEntries ?? [])) return undefined;
+
+    try {
+      const observations = this.repository.listPromptObservations?.({ workspaceId: this.workspaceId, limit: this.settings.compaction.maxObservations }) ?? [];
+      const decisions = observations
+        .filter((item) => item.kind === "project_decision" || item.kind === "decision")
+        .slice(0, this.settings.compaction.maxFacts);
+      const activeFacts = observations
+        .filter((item) => !decisions.some((decision) => decision.id === item.id))
+        .slice(0, this.settings.compaction.maxFacts);
+      const instincts = (this.repository.listPromptInstincts?.({ workspaceId: this.workspaceId, limit: this.settings.compaction.maxInstincts }) ?? [])
+        .slice(0, this.settings.compaction.maxInstincts) as any[];
+      const artifacts = (this.repository.listArtifactReferences?.({ workspaceId: this.workspaceId, limit: this.settings.compaction.maxArtifacts }) ?? [])
+        .slice(0, this.settings.compaction.maxArtifacts) as any[];
+      const revisions = this.compactionRevisionNotes(observations).slice(0, this.settings.compaction.maxRevisions);
+      const pendingSyncJobs = this.repository.listPendingSyncJobs?.(this.settings.sync.maxBatchItems).length ?? 0;
+
+      const summary = buildCompactionSummary({
+        maxSummaryChars: this.settings.compaction.maxSummaryChars,
+        previousSummary: event.preparation?.previousSummary,
+        includePreviousSummary: this.settings.compaction.includePreviousSummary,
+        activeFacts,
+        decisions,
+        instincts,
+        revisions,
+        artifacts,
+        fileOps: this.settings.compaction.includeFileOps ? event.preparation?.fileOps : undefined,
+        syncStatus: `${pendingSyncJobs} pending sync job${pendingSyncJobs === 1 ? "" : "s"}`,
+      });
+      if (!summary) return undefined;
+
+      return {
+        compaction: {
+          summary,
+          firstKeptEntryId: event.preparation?.firstKeptEntryId,
+          tokensBefore: event.preparation?.tokensBefore,
+          details: {
+            type: "pi-vibe-memory",
+            version: 1,
+            mode: "owner",
+            source: "sqlite-local",
+            summaryChars: summary.length,
+          },
+        },
+      };
+    } catch (error) {
+      if (this.settings.compaction.failOpen) return undefined;
+      throw error;
+    }
   }
 
   async captureTurnEnd(input: CaptureTurnEndInput): Promise<boolean> {
@@ -523,6 +602,22 @@ export class VibeMemoryRuntime {
       }
     }
     return notes as any[];
+  }
+
+  private compactionRevisionNotes(observations: ObservationRecord[]): any[] {
+    if (!this.repository.listMemoryRevisions) return [];
+    const seen = new Set<string>();
+    const notes: any[] = [];
+    for (const item of observations) {
+      for (const revision of this.repository.listMemoryRevisions(item.id) ?? []) {
+        const id = isRecord(revision) && typeof revision.id === "string" ? revision.id : JSON.stringify(revision);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        notes.push(revision);
+        if (notes.length >= this.settings.compaction.maxRevisions) return notes;
+      }
+    }
+    return notes;
   }
 
   private enqueueObservation(observation: ObservationInput): void {
