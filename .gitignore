@@ -5,3 +5,15 @@ coverage/
 *.db-shm
 *.db-wal
 .DS_Store
+
+# Local /relay session artifacts.
+# Canonical tracked relay handoff docs live under docs/relay/.
+/RELAY.md
+/RELAY-NEXT.md
+/RELAY-LOG.md
+/SCRATCHPAD.md
+/MEMORY.md
+/relay-state.json
+/.relay/
+/relay
+/relay/
