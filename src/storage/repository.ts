@@ -333,6 +333,16 @@ export class VibeMemoryRepository {
     this.db.prepare("DELETE FROM sync_queue WHERE id = ?").run(id);
   }
 
+  markSyncJobFailed(id: string, error: string): void {
+    this.db.prepare(`
+      UPDATE sync_queue
+      SET attempts = attempts + 1,
+          last_error = @error,
+          updated_at = @updatedAt
+      WHERE id = @id
+    `).run({ id, error, updatedAt: isoNow() });
+  }
+
   upsertArtifactReference(input: ArtifactReferenceInput): void {
     const now = isoNow();
     const params = {
