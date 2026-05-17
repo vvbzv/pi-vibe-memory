@@ -65,10 +65,22 @@ test("repository stores and searches observations", async () => {
       confidence: 0.8,
       trust: 0.9,
     });
+    repo.addObservation({
+      id: "obs-old",
+      workspaceId: "ws1",
+      kind: "decision",
+      scope: "project",
+      title: "Old deployment shape",
+      content: "User chose an installable npm package but this old wording is historical.",
+      status: "historical",
+    });
 
     const matches = repo.searchObservations("installable npm", { workspaceId: "ws1", limit: 5 });
     assert.equal(matches.length, 1);
     assert.equal(matches[0]?.id, "obs1");
+
+    const withInactive = repo.searchObservations("installable npm", { workspaceId: "ws1", limit: 5, includeInactive: true });
+    assert.deepEqual(withInactive.map((item) => item.id).sort(), ["obs-old", "obs1"]);
   } finally {
     db.close();
   }
@@ -121,19 +133,19 @@ test("comparative revisions supersede without deleting old observations", async 
   }
 });
 
-test("prompt observation and instinct lists are bounded and exclude inactive knowledge by default", async () => {
+test("prompt observation and instinct lists are bounded, ranked, and exclude inactive knowledge by default", async () => {
   const db = openVibeMemoryDb(await tempDbPath());
   try {
     const repo = new VibeMemoryRepository(db);
     repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
 
-    repo.addObservation({ id: "active1", workspaceId: "ws1", kind: "fact", scope: "project", title: "Active 1", content: "First active memory.", status: "active" });
-    repo.addObservation({ id: "active2", workspaceId: "ws1", kind: "fact", scope: "project", title: "Active 2", content: "Second active memory.", status: "active" });
-    repo.addObservation({ id: "old", workspaceId: "ws1", kind: "fact", scope: "project", title: "Old", content: "Historical memory.", status: "historical" });
+    repo.addObservation({ id: "low-trust-new", workspaceId: "ws1", kind: "fact", scope: "project", title: "Active 1", content: "Fresh but low-trust memory.", status: "active", confidence: 0.2, trust: 0.2 });
+    repo.addObservation({ id: "high-trust", workspaceId: "ws1", kind: "fact", scope: "project", title: "Active 2", content: "Better trusted memory.", status: "active", confidence: 0.9, trust: 0.9 });
+    repo.addObservation({ id: "old", workspaceId: "ws1", kind: "fact", scope: "project", title: "Old", content: "Historical memory.", status: "historical", confidence: 1, trust: 1 });
 
     assert.deepEqual(
       repo.listPromptObservations({ workspaceId: "ws1", limit: 1 }).map((item) => item.id),
-      ["active2"],
+      ["high-trust"],
     );
 
     repo.addInstinctCandidate({ id: "i1", workspaceId: "ws1", kind: "reflection", content: "Use narrow tests.", confidence: 0.9, status: "working" });
@@ -144,6 +156,23 @@ test("prompt observation and instinct lists are bounded and exclude inactive kno
       repo.listPromptInstincts({ workspaceId: "ws1", limit: 2 }).map((item) => item.id),
       ["i1", "i2"],
     );
+  } finally {
+    db.close();
+  }
+});
+
+test("artifact references dedupe path-only rows", async () => {
+  const db = openVibeMemoryDb(await tempDbPath());
+  try {
+    const repo = new VibeMemoryRepository(db);
+    repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
+
+    repo.upsertArtifactReference({ id: "art1", workspaceId: "ws1", path: "src/runtime.ts", artifactType: "code_reference" });
+    repo.upsertArtifactReference({ id: "art2", workspaceId: "ws1", path: "src/runtime.ts", artifactType: "code_reference" });
+
+    const refs = repo.listArtifactReferences({ workspaceId: "ws1", limit: 10 });
+    assert.equal(refs.length, 1);
+    assert.equal(refs[0]?.path, "src/runtime.ts");
   } finally {
     db.close();
   }

@@ -274,7 +274,7 @@ export class VibeMemoryRepository {
       SELECT * FROM observations
       WHERE workspace_id = @workspaceId
         AND status IN ('active', 'working', 'needs_review')
-      ORDER BY updated_at DESC, created_at DESC, rowid DESC
+      ORDER BY trust DESC, confidence DESC, updated_at DESC, created_at DESC, rowid DESC
       LIMIT @limit
     `).all({ workspaceId: options.workspaceId, limit: boundedLimit(options.limit) }) as ObservationRow[];
     return rows.map(mapObservation);
@@ -335,20 +335,7 @@ export class VibeMemoryRepository {
 
   upsertArtifactReference(input: ArtifactReferenceInput): void {
     const now = isoNow();
-    this.db.prepare(`
-      INSERT INTO artifact_references (
-        id, workspace_id, session_id, observation_id, path, artifact_type, symbol,
-        line_start, line_end, source_event_ids_json, created_at, updated_at
-      ) VALUES (
-        @id, @workspaceId, @sessionId, @observationId, @path, @artifactType, @symbol,
-        @lineStart, @lineEnd, @sourceEventIdsJson, @now, @now
-      )
-      ON CONFLICT(workspace_id, path, artifact_type, symbol, line_start, line_end) DO UPDATE SET
-        session_id = COALESCE(excluded.session_id, artifact_references.session_id),
-        observation_id = COALESCE(excluded.observation_id, artifact_references.observation_id),
-        source_event_ids_json = excluded.source_event_ids_json,
-        updated_at = excluded.updated_at
-    `).run({
+    const params = {
       id: input.id,
       workspaceId: input.workspaceId,
       sessionId: input.sessionId ?? null,
@@ -360,7 +347,40 @@ export class VibeMemoryRepository {
       lineEnd: input.lineEnd ?? null,
       sourceEventIdsJson: stringify(input.sourceEventIds ?? []),
       now,
-    });
+    };
+
+    const existing = this.db.prepare(`
+      SELECT id FROM artifact_references
+      WHERE workspace_id = @workspaceId
+        AND path = @path
+        AND artifact_type = @artifactType
+        AND symbol IS @symbol
+        AND line_start IS @lineStart
+        AND line_end IS @lineEnd
+      LIMIT 1
+    `).get(params) as { id: string } | undefined;
+
+    if (existing) {
+      this.db.prepare(`
+        UPDATE artifact_references
+        SET session_id = COALESCE(@sessionId, session_id),
+            observation_id = COALESCE(@observationId, observation_id),
+            source_event_ids_json = @sourceEventIdsJson,
+            updated_at = @now
+        WHERE id = @existingId
+      `).run({ ...params, existingId: existing.id });
+      return;
+    }
+
+    this.db.prepare(`
+      INSERT INTO artifact_references (
+        id, workspace_id, session_id, observation_id, path, artifact_type, symbol,
+        line_start, line_end, source_event_ids_json, created_at, updated_at
+      ) VALUES (
+        @id, @workspaceId, @sessionId, @observationId, @path, @artifactType, @symbol,
+        @lineStart, @lineEnd, @sourceEventIdsJson, @now, @now
+      )
+    `).run(params);
   }
 
   listArtifactReferences(options: { workspaceId: string; limit?: number }): ArtifactReferenceRecord[] {
