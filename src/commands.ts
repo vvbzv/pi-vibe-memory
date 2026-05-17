@@ -38,6 +38,11 @@ export function registerVibeMemoryCommands(pi: Registrar, getRuntime: RuntimeGet
     notify(ctx, `pi-vibe-memory meditation: ${formatBrief(result)}`);
   });
 
+  register(pi, COMMAND_NAMES.review, "Review pi-vibe-memory candidates", async (args, ctx) => {
+    const result = await callRuntime(getRuntime(), "review", parseReviewArgs(args), "no review items available");
+    notify(ctx, `pi-vibe-memory review (untrusted): ${formatBrief(result)}`);
+  });
+
   register(pi, COMMAND_NAMES.reviewInstincts, "Review pi-vibe-memory working instincts", async (_args, ctx) => {
     const result = await callRuntime(getRuntime(), "reviewInstincts", {}, "no instincts available");
     notify(ctx, `pi-vibe-memory instincts (untrusted): ${formatBrief(result)}`);
@@ -79,4 +84,9 @@ function formatBrief(value: unknown): string {
     if (typeof record.ok === "boolean") return record.ok ? "ok" : "issues found";
   }
   return String(value);
+}
+
+function parseReviewArgs(args: string): Record<string, unknown> {
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  return { action: parts[0] ?? "list", id: parts[1] };
 }

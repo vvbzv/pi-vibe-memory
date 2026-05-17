@@ -7,6 +7,7 @@ import {
   DEFAULT_DB_RELATIVE_PATH,
   PACKAGE_NAME,
   TOOL_NAMES,
+  ALLOWED_MEMORY_KINDS,
 } from "../src/constants.js";
 
 test("public names are Pi-specific and collision-resistant", () => {
@@ -26,5 +27,23 @@ test("public names are Pi-specific and collision-resistant", () => {
   for (const name of Object.values(COMMAND_NAMES)) {
     assert.match(name, /^vibe-memory-/);
     assert.ok(!/forget|delete/.test(name));
+  }
+});
+
+
+test("typed memory kinds include continuous-learning replacement and existing local kinds", () => {
+  for (const kind of [
+    "project_fact",
+    "user_preference",
+    "project_decision",
+    "environment_fact",
+    "behavior_instinct",
+    "risk_note",
+    "revision_note",
+    "turn_summary",
+    "code_reference",
+    "doc_reference",
+  ]) {
+    assert.ok(ALLOWED_MEMORY_KINDS.includes(kind as any), `${kind} should be allowed`);
   }
 });

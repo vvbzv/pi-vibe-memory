@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { extractArtifactReferences } from "./codeReferences.js";
+import { ALLOWED_MEMORY_KINDS, MEMORY_SCOPES } from "./constants.js";
 import { buildCompactionSummary, shouldSkipCustomCompaction } from "./compaction.js";
 import { mapContinuousLearningFact, mapContinuousLearningInstinct } from "./importers/continuousLearning.js";
 import { mapLapisArtifact } from "./importers/lapis.js";
@@ -16,6 +17,7 @@ import {
 import { renderMemoryBlock, type PromptHindsightMemory } from "./prompt.js";
 import { scrubSecrets, truncateText } from "./scrub.js";
 import { normalizeTurnEndEvent } from "./capture.js";
+import { applyReviewAction } from "./review.js";
 import type {
   ArtifactReferenceInput,
   InstinctCandidateInput,
@@ -30,8 +32,9 @@ export interface RuntimeRepository {
   upsertArtifactReference?(input: ArtifactReferenceInput): void;
   enqueueSyncJob?(input: { id: string; observationId?: string; operation: string; payload: unknown }): void;
   listPromptObservations?(options: { workspaceId: string; limit?: number }): ObservationRecord[];
-  searchObservations?(query: string, options: { workspaceId: string; limit?: number; includeInactive?: boolean }): ObservationRecord[];
+  searchObservations?(query: string, options: { workspaceId: string; limit?: number; includeInactive?: boolean; includeHistorical?: boolean; kind?: string; status?: string }): ObservationRecord[];
   listPromptInstincts?(options: { workspaceId: string; limit?: number }): unknown[];
+  listReviewObservations?(options: { workspaceId: string; limit?: number; kind?: string }): ObservationRecord[];
   listArtifactReferences?(options: { workspaceId: string; limit?: number }): unknown[];
   listPendingSyncJobs?(limit?: number): unknown[];
   markSyncJobDone?(id: string): void;
@@ -40,6 +43,8 @@ export interface RuntimeRepository {
   listMemoryRevisions?(observationId: string): unknown[];
   recordMemoryRevision?(input: { id: string; oldObservationId: string; newObservationId: string; relation: string; reason: string }): void;
   addInstinctCandidate?(input: InstinctCandidateInput): void;
+  setObservationStatus?(id: string, status: any): void;
+  setInstinctCandidateStatus?(id: string, status: any): void;
   startMeditationRun?(input: { id: string; workspaceId: string; sessionId?: string; trigger: string; status: string; inputObservationIds?: string[] }): void;
   finishMeditationRun?(input: { id: string; status: string; error?: string }): void;
 }
@@ -399,7 +404,14 @@ export class VibeMemoryRuntime {
   async recall(params: JsonRecord): Promise<unknown[]> {
     const query = typeof params.query === "string" && params.query.trim() ? params.query.trim() : "recent";
     const limit = numberParam(params.limit, this.settings.localObservationLimit);
-    const local = this.repository.searchObservations?.(query, { workspaceId: this.workspaceId, limit, includeInactive: params.includeInactive === true }) ?? [];
+    const local = this.repository.searchObservations?.(query, {
+      workspaceId: this.workspaceId,
+      limit,
+      includeInactive: params.includeInactive === true,
+      includeHistorical: params.includeHistorical === true,
+      kind: optionalAllowedString(params.kind, ALLOWED_MEMORY_KINDS, "kind"),
+      status: optionalAllowedString(params.status, ["active", "superseded", "historical", "working", "needs_review"] as const, "status"),
+    }) ?? [];
     if (!this.hindsight?.recall || this.settings.hindsight.enabled === false) return local;
     try {
       return [...local, ...await this.recallHindsight(query)];
@@ -411,16 +423,19 @@ export class VibeMemoryRuntime {
   async remember(params: JsonRecord): Promise<JsonRecord> {
     if (params.explicit !== true) return { status: "confirmation-needed" };
     const content = scrubSecrets(requiredString(params.content, "content"), { maxChars: 2000 });
+    const kind = optionalAllowedString(params.kind, ALLOWED_MEMORY_KINDS, "kind") ?? "explicit_memory";
+    const scope = optionalAllowedString(params.scope, MEMORY_SCOPES, "scope") ?? "project";
+    const tags = uniqueStrings(["explicit", ...stringArray(params.tags)]);
     const observation: ObservationInput = {
-      id: `obs_${hash(`${this.sessionId}:remember:${content}`)}`,
+      id: `obs_${hash(`${this.sessionId}:remember:${kind}:${scope}:${content}`)}`,
       workspaceId: this.workspaceId,
       sessionId: this.sessionId,
-      kind: "explicit_memory",
-      scope: "project",
+      kind,
+      scope,
       title: truncateText(content.replace(/\s+/g, " "), 100),
       content,
       sourceEventIds: [],
-      tags: ["explicit"],
+      tags,
       confidence: 0.75,
       trust: 0.8,
       status: "active",
@@ -464,6 +479,10 @@ export class VibeMemoryRuntime {
 
   async meditate(params: JsonRecord = {}): Promise<MeditationResult> {
     return this.runMeditation({ trigger: "manual", force: params.force === true || true });
+  }
+
+  async review(params: JsonRecord = {}): Promise<JsonRecord> {
+    return applyReviewAction(this.repository as any, { ...params, workspaceId: this.workspaceId });
   }
 
   async reviewInstincts(): Promise<unknown[]> {
@@ -676,6 +695,28 @@ function requiredString(value: unknown, name: string): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function optionalAllowedString<const T extends readonly string[]>(value: unknown, allowed: T, name: string): T[number] | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !allowed.includes(value as T[number])) throw new Error(`${name} must be one of: ${allowed.join(", ")}`);
+  return value as T[number];
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim() !== "").map((item) => item.trim());
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }
 
 function isRecord(value: unknown): value is JsonRecord {

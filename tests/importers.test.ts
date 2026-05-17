@@ -51,7 +51,7 @@ test("continuous-learning facts map to declarative observations without deleting
     projectSlug: "pi-vibe-memory",
   });
 
-  assert.equal(mapped.kind, "fact");
+  assert.equal(mapped.kind, "project_fact");
   assert.equal(mapped.scope, "project");
   assert.equal(mapped.title, "Runtime");
   assert.equal(mapped.confidence, 0.84);
@@ -81,11 +81,11 @@ test("continuous-learning instincts map to non-durable working candidates requir
     sessionId: "session-1",
   });
 
-  assert.equal(mapped.kind, "directive_candidate");
+  assert.equal(mapped.kind, "behavior_instinct");
   assert.equal(mapped.trigger, "When adding package behavior");
   assert.equal(mapped.action, "Write a failing test first.");
   assert.equal(mapped.content, "When adding package behavior\nWrite a failing test first.");
-  assert.equal(mapped.status, "working");
+  assert.equal(mapped.status, "needs_review");
   assert.equal(mapped.durableApproved, false);
   assert.equal(mapped.reviewed, false);
   assert.equal(mapped.needsReview, true);

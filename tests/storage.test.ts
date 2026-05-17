@@ -161,6 +161,37 @@ test("prompt observation and instinct lists are bounded, ranked, and exclude ina
   }
 });
 
+
+test("repository filters typed observations and updates review statuses", async () => {
+  const db = openVibeMemoryDb(await tempDbPath());
+  try {
+    const repo = new VibeMemoryRepository(db);
+    repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
+    repo.addObservation({ id: "fact1", workspaceId: "ws1", kind: "project_fact", scope: "project", title: "Hindsight", content: "Hindsight server runs locally.", status: "active" });
+    repo.addObservation({ id: "risk1", workspaceId: "ws1", kind: "risk_note", scope: "project", title: "Risk", content: "Hindsight server can be offline.", status: "historical" });
+    repo.addObservation({ id: "review1", workspaceId: "ws1", kind: "project_decision", scope: "project", title: "Review", content: "Review this decision.", status: "needs_review" });
+    repo.addInstinctCandidate({ id: "inst1", workspaceId: "ws1", kind: "behavior_instinct", content: "Use TDD.", status: "needs_review" });
+
+    assert.deepEqual(
+      repo.searchObservations("Hindsight server", { workspaceId: "ws1", kind: "project_fact", status: "active", limit: 10 }).map((item) => item.id),
+      ["fact1"],
+    );
+    assert.deepEqual(
+      repo.searchObservations("Hindsight server", { workspaceId: "ws1", includeHistorical: true, limit: 10 }).map((item) => item.id).sort(),
+      ["fact1", "risk1"],
+    );
+    assert.deepEqual(repo.listReviewObservations({ workspaceId: "ws1", limit: 10 }).map((item) => item.id), ["review1"]);
+
+    repo.setObservationStatus("review1", "active");
+    repo.setInstinctCandidateStatus("inst1", "active");
+    assert.equal(repo.getObservation("review1")?.status, "active");
+    assert.equal(repo.listPromptInstincts({ workspaceId: "ws1", limit: 10 }).find((item) => item.id === "inst1")?.status, "active");
+  } finally {
+    db.close();
+  }
+});
+
+
 test("artifact references dedupe path-only rows", async () => {
   const db = openVibeMemoryDb(await tempDbPath());
   try {

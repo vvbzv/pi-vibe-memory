@@ -43,6 +43,9 @@ class FakeRepository {
   listMemoryRevisions() { return this.revisions; }
   recordMemoryRevision(input: any) { this.revisions.push(input); }
   addInstinctCandidate(input: any) { this.candidates.push(input); }
+  setObservationStatus(id: string, status: string) { const item = this.observations.find((obs) => obs.id === id) ?? this.promptObservations.find((obs) => obs.id === id); if (item) item.status = status; }
+  setInstinctCandidateStatus(id: string, status: string) { const item = this.candidates.find((candidate) => candidate.id === id) ?? this.promptInstincts.find((candidate) => candidate.id === id); if (item) item.status = status; }
+  listReviewObservations() { return this.observations.filter((item) => item.status === "needs_review").concat(this.promptObservations.filter((item) => item.status === "needs_review")); }
   startMeditationRun(input: any) { this.meditationRuns.push(input); }
   finishMeditationRun(input: any) { this.meditationRuns.push({ finish: input }); }
 }
@@ -273,6 +276,66 @@ test("runtime tool methods are thin, explicit, and non-destructive", async () =>
   assert.equal(repository.revisions[0].oldObservationId, "old");
   assert.equal(repository.revisions[0].relation, "supersedes");
 });
+
+
+test("remember validates typed durable memory fields and recall forwards typed filters", async () => {
+  const repository = new FakeRepository();
+  let searchOptions: any;
+  repository.searchObservations = (_query?: string, options?: any) => {
+    searchOptions = options;
+    return repository.searchResults;
+  };
+  const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
+
+  await assert.rejects(
+    () => runtime.remember({ content: "Nope", kind: "random_kind", explicit: true }),
+    /kind/,
+  );
+
+  const result = await runtime.remember({
+    content: "User prefers KISS changes.",
+    kind: "user_preference",
+    scope: "project",
+    tags: ["style", "style", "kiss"],
+    explicit: true,
+  });
+
+  assert.equal(result.status, "stored");
+  const observation = repository.observations.at(-1)!;
+  assert.equal(observation.kind, "user_preference");
+  assert.equal(observation.scope, "project");
+  assert.deepEqual(observation.tags, ["explicit", "style", "kiss"]);
+  assert.equal(observation.status, "active");
+
+  await runtime.recall({ query: "KISS", kind: "user_preference", status: "active", includeHistorical: true });
+  assert.equal(searchOptions.kind, "user_preference");
+  assert.equal(searchOptions.status, "active");
+  assert.equal(searchOptions.includeHistorical, true);
+});
+
+test("review lists candidates and applies non-destructive actions", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [{ id: "obs-review", kind: "project_fact", content: "Needs review", status: "needs_review" }];
+  repository.promptInstincts = [{ id: "inst-review", kind: "behavior_instinct", content: "Write tests first", status: "needs_review" }];
+  const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
+
+  const listed = await runtime.review({ action: "list" }) as any;
+  assert.deepEqual(listed.items.map((item: any) => item.id).sort(), ["inst-review", "obs-review"]);
+
+  const approved = await runtime.review({ action: "approve_active", id: "obs-review" }) as any;
+  assert.equal(approved.status, "active");
+  assert.equal(repository.promptObservations[0].status, "active");
+
+  const deferred = await runtime.review({ action: "defer", id: "inst-review" }) as any;
+  assert.equal(deferred.status, "needs_review");
+  assert.equal(repository.promptInstincts[0].status, "needs_review");
+
+  await assert.rejects(
+    () => runtime.review({ action: "delete", id: "obs-review" }),
+    /action/,
+  );
+});
+
 
 test("beforeCompact returns owner compaction without calling Hindsight", async () => {
   const repository = new FakeRepository();

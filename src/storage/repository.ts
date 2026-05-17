@@ -2,6 +2,15 @@ import type { VibeMemoryDb } from "./db.js";
 
 export type MemoryStatus = "active" | "superseded" | "historical" | "working" | "needs_review";
 
+export interface ObservationSearchOptions {
+  workspaceId: string;
+  limit?: number;
+  includeInactive?: boolean;
+  includeHistorical?: boolean;
+  kind?: string;
+  status?: MemoryStatus;
+}
+
 export interface WorkspaceInput {
   id: string;
   name: string;
@@ -248,21 +257,23 @@ export class VibeMemoryRepository {
     return row ? mapObservation(row) : undefined;
   }
 
-  searchObservations(query: string, options: { workspaceId: string; limit?: number; includeInactive?: boolean }): ObservationRecord[] {
+  searchObservations(query: string, options: ObservationSearchOptions): ObservationRecord[] {
     const limit = boundedLimit(options.limit);
-    const statuses = options.includeInactive ? null : PROMPT_OBSERVATION_STATUSES;
+    const statuses = options.status ? [options.status] : options.includeInactive || options.includeHistorical ? null : PROMPT_OBSERVATION_STATUSES;
     const rows = this.db.prepare(`
       SELECT o.*
       FROM observations_fts f
       JOIN observations o ON o.id = f.observation_id
       WHERE observations_fts MATCH @query
         AND f.workspace_id = @workspaceId
+        AND (@kind IS NULL OR o.kind = @kind)
         AND (@statusesJson IS NULL OR o.status IN (SELECT value FROM json_each(@statusesJson)))
       ORDER BY bm25(observations_fts), o.updated_at DESC
       LIMIT @limit
     `).all({
       query,
       workspaceId: options.workspaceId,
+      kind: options.kind ?? null,
       statusesJson: statuses ? stringify(statuses) : null,
       limit,
     }) as ObservationRow[];
@@ -278,6 +289,23 @@ export class VibeMemoryRepository {
       LIMIT @limit
     `).all({ workspaceId: options.workspaceId, limit: boundedLimit(options.limit) }) as ObservationRow[];
     return rows.map(mapObservation);
+  }
+
+  listReviewObservations(options: { workspaceId: string; limit?: number; kind?: string }): ObservationRecord[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM observations
+      WHERE workspace_id = @workspaceId
+        AND status = 'needs_review'
+        AND (@kind IS NULL OR kind = @kind)
+      ORDER BY trust DESC, confidence DESC, updated_at DESC, created_at DESC, rowid DESC
+      LIMIT @limit
+    `).all({ workspaceId: options.workspaceId, kind: options.kind ?? null, limit: boundedLimit(options.limit) }) as ObservationRow[];
+    return rows.map(mapObservation);
+  }
+
+  setObservationStatus(id: string, status: MemoryStatus): void {
+    this.db.prepare("UPDATE observations SET status = @status, updated_at = @updatedAt WHERE id = @id")
+      .run({ id, status, updatedAt: isoNow() });
   }
 
   recordMemoryRevision(input: MemoryRevisionInput): void {
@@ -483,6 +511,11 @@ export class VibeMemoryRepository {
       LIMIT @limit
     `).all({ workspaceId: options.workspaceId, now: isoNow(), limit: boundedLimit(options.limit) }) as InstinctCandidateRow[];
     return rows.map(mapInstinctCandidate);
+  }
+
+  setInstinctCandidateStatus(id: string, status: MemoryStatus): void {
+    this.db.prepare("UPDATE instinct_candidates SET status = @status, updated_at = @updatedAt WHERE id = @id")
+      .run({ id, status, updatedAt: isoNow() });
   }
 }
 

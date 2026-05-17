@@ -109,6 +109,31 @@ test("import tool prepares JSON-ish string records from weaker models", async ()
   assert.deepEqual(prepared.records, [{ id: "legacy1", content: "legacy imported memory" }]);
 });
 
+
+test("typed memory and review tool schemas expose safe filters and actions", async () => {
+  const tools = buildToolDefinitions(() => ({ review: async (params) => ({ status: "ok", params }) }));
+  const remember = tools.find((tool) => tool.name === TOOL_NAMES.remember)!;
+  const recall = tools.find((tool) => tool.name === TOOL_NAMES.recall)!;
+  const review = tools.find((tool) => tool.name === TOOL_NAMES.review)!;
+
+  const rememberProps = remember.parameters.properties as Record<string, unknown>;
+  const recallProps = recall.parameters.properties as Record<string, unknown>;
+  const reviewProps = review.parameters.properties as Record<string, unknown>;
+
+  assert.ok("kind" in rememberProps);
+  assert.ok("scope" in rememberProps);
+  assert.ok("tags" in rememberProps);
+  assert.ok("kind" in recallProps);
+  assert.ok("status" in recallProps);
+  assert.ok("includeHistorical" in recallProps);
+  assert.ok("action" in reviewProps);
+  assert.ok(!JSON.stringify(review.parameters).match(/delete|forget|reject/i));
+
+  const result = await review.execute("call1", { action: "list" }, new AbortController().signal);
+  assert.match(result.content[0].text, /review/i);
+});
+
+
 test("tool callbacks preserve VibeMemoryRuntime method binding", async () => {
   const repository = {
     observations: [] as any[],
