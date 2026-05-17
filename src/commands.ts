@@ -61,7 +61,7 @@ function register(pi: Registrar, name: string, description: string, handler: (ar
 
 async function callRuntime(runtime: VibeMemoryRuntime | undefined, method: keyof VibeMemoryRuntime, params: Record<string, unknown>, fallback: unknown): Promise<unknown> {
   const fn = runtime?.[method];
-  return typeof fn === "function" ? fn(params) : fallback;
+  return typeof fn === "function" ? fn.call(runtime, params) : fallback;
 }
 
 function notify(ctx: CommandContext, message: string, level: "info" | "warn" | "error" = "info"): void {

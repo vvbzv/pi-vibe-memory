@@ -94,7 +94,7 @@ function tool(name: string, label: string, description: string, parameters: Json
 
 async function callRuntime(runtime: VibeMemoryRuntime | undefined, method: keyof VibeMemoryRuntime, params: Record<string, unknown>, fallback: unknown): Promise<unknown> {
   const fn = runtime?.[method];
-  return typeof fn === "function" ? fn(params) : fallback;
+  return typeof fn === "function" ? fn.call(runtime, params) : fallback;
 }
 
 function confirmationNeeded(action: string, instruction: string): ToolResult {
