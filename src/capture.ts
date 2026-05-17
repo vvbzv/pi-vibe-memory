@@ -83,6 +83,8 @@ export function normalizeTurnEndEvent(input: NormalizedTurnEndInput): Normalized
   const assistant = compactWhitespace(input.assistantText ?? "");
   const promptCapturable = shouldCapturePrompt(prompt, { captureRawPrompts: input.captureRawPrompts });
 
+  const promptIsTrivial = Boolean(prompt) && !shouldCapturePrompt(prompt, { captureRawPrompts: true });
+  if (promptIsTrivial) return null;
   if (!assistant && !promptCapturable) return null;
 
   const maxSnippetChars = input.maxSnippetChars ?? 600;
@@ -90,9 +92,9 @@ export function normalizeTurnEndEvent(input: NormalizedTurnEndInput): Normalized
   const rawEventId = `evt_${digest(sourceKey)}`;
   const scrubbedPrompt = promptCapturable ? scrubSecrets(prompt, { maxChars: maxSnippetChars }) : undefined;
   const scrubbedAssistant = assistant ? scrubSecrets(assistant, { maxChars: maxSnippetChars }) : undefined;
-  const titleBase = prompt ? truncateText(scrubSecrets(prompt, { maxChars: 72 }), 72) : "Assistant completed a turn";
+  const titleBase = scrubbedPrompt ? truncateText(scrubbedPrompt, 72) : "Assistant completed a turn";
   const contentParts = [
-    prompt ? `User requested: ${truncateText(scrubSecrets(prompt, { maxChars: maxSnippetChars }), maxSnippetChars)}` : undefined,
+    scrubbedPrompt ? `User requested: ${truncateText(scrubbedPrompt, maxSnippetChars)}` : undefined,
     scrubbedAssistant ? `Assistant summary: ${scrubbedAssistant}` : undefined,
   ].filter(Boolean);
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { truncateText } from "./scrub.js";
+import { scrubSecrets, truncateText } from "./scrub.js";
 
 export type ArtifactReferenceType = "code_reference" | "doc_reference" | "config_reference" | "test_reference";
 
@@ -62,19 +62,24 @@ function trimCandidate(value: string): string {
   return value.replace(/^[`'"(\[{<]+/, "").replace(/[`'"),\]}>.;]+$/, "");
 }
 
-function parseLineSuffix(candidate: string): { rawPath: string; lineStart?: number; lineEnd?: number } {
+function parseLineSuffix(candidate: string): { rawPath: string; lineStart?: number; lineEnd?: number } | null {
   const match = /^(.*?):(\d+)(?:-(\d+))?$/.exec(candidate);
   if (!match) return { rawPath: candidate };
+  const lineStart = Number(match[2]);
+  const lineEnd = match[3] ? Number(match[3]) : undefined;
+  if (lineStart <= 0 || (lineEnd != null && lineEnd < lineStart)) return null;
   return {
     rawPath: match[1] ?? candidate,
-    lineStart: Number(match[2]),
-    lineEnd: match[3] ? Number(match[3]) : undefined,
+    lineStart,
+    lineEnd,
   };
 }
 
 function normalizeCandidatePath(rawPath: string, workspaceRoot: string): string | null {
   const normalizedRaw = normalizeSlashes(rawPath);
   const normalizedRoot = normalizeSlashes(path.resolve(workspaceRoot));
+
+  if (/^[A-Za-z]:\//.test(normalizedRaw)) return null;
 
   if (path.isAbsolute(normalizedRaw)) {
     const resolved = normalizeSlashes(path.resolve(normalizedRaw));
@@ -116,14 +121,15 @@ export function classifyArtifactPath(filePath: string): ArtifactReferenceType {
 
 function provenanceFor(text: string, rawCandidate: string): string {
   const index = text.indexOf(rawCandidate);
-  if (index < 0) return truncateText(text.replace(/\s+/g, " ").trim(), 140);
-  const start = Math.max(0, index - 45);
-  const end = Math.min(text.length, index + rawCandidate.length + 45);
-  return truncateText(text.slice(start, end).replace(/\s+/g, " ").trim(), 140);
+  const snippet = index < 0
+    ? text
+    : text.slice(Math.max(0, index - 45), Math.min(text.length, index + rawCandidate.length + 45));
+  return scrubSecrets(snippet.replace(/\s+/g, " ").trim(), { maxChars: 140 });
 }
 
 export function extractArtifactReferences(input: ExtractArtifactReferencesInput): ArtifactReference[] {
-  const maxReferences = Math.max(0, input.maxReferences ?? DEFAULT_MAX_REFERENCES);
+  const requestedMax = input.maxReferences ?? DEFAULT_MAX_REFERENCES;
+  const maxReferences = Number.isFinite(requestedMax) ? Math.max(0, Math.min(Math.floor(requestedMax), 20)) : 0;
   if (maxReferences === 0) return [];
 
   const refs: ArtifactReference[] = [];
@@ -134,15 +140,18 @@ export function extractArtifactReferences(input: ExtractArtifactReferencesInput)
   for (const match of matches) {
     const rawCandidate = trimCandidate(match[0]);
     const parsed = parseLineSuffix(rawCandidate);
+    if (!parsed) continue;
     const relativePath = normalizeCandidatePath(parsed.rawPath, input.workspaceRoot);
     if (!relativePath || !isAllowed(relativePath, input.allowedExtensions)) continue;
 
     const normalizedPath = normalizeSlashes(relativePath);
-    if (seen.has(normalizedPath)) continue;
-    seen.add(normalizedPath);
+    const rangeKey = `${parsed.lineStart ?? ""}:${parsed.lineEnd ?? ""}`;
+    const dedupeKey = `${normalizedPath}:${rangeKey}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
 
     refs.push({
-      id: `art_${digest(`${input.sourceEventId}:${normalizedPath}`)}`,
+      id: `art_${digest(`${input.sourceEventId}:${dedupeKey}`)}`,
       path: normalizedPath,
       artifactType: classifyArtifactPath(normalizedPath),
       sourceEventId: input.sourceEventId,

@@ -46,6 +46,27 @@ test("extractArtifactReferences dedupes, bounds output, and rejects outside or d
   assert.deepEqual(refs.map((ref) => ref.path), ["src/a.ts", "src/b.ts"]);
 });
 
+test("extractArtifactReferences preserves distinct ranges and scrubs provenance", () => {
+  const refs = extractArtifactReferences({
+    text: "token=abc123456789abcdef failed near src/a.ts:10 and src/a.ts:50-60",
+    workspaceRoot: "/repo",
+    sourceEventId: "evt-secret",
+    maxReferences: 10,
+  });
+
+  assert.deepEqual(refs.map((ref) => `${ref.path}:${ref.lineStart ?? ""}-${ref.lineEnd ?? ""}`), [
+    "src/a.ts:10-",
+    "src/a.ts:50-60",
+  ]);
+  assert.ok(refs.every((ref) => !ref.provenanceDigest.includes("abc123456789abcdef")));
+});
+
+test("extractArtifactReferences rejects invalid ranges, drive paths, and invalid caps", () => {
+  assert.deepEqual(extractArtifactReferences({ text: "src/a.ts:20-10", workspaceRoot: "/repo", sourceEventId: "evt" }), []);
+  assert.deepEqual(extractArtifactReferences({ text: "C:/repo/src/a.ts", workspaceRoot: "/repo", sourceEventId: "evt" }), []);
+  assert.deepEqual(extractArtifactReferences({ text: "src/a.ts src/b.ts", workspaceRoot: "/repo", sourceEventId: "evt", maxReferences: Number.NaN }), []);
+});
+
 test("summarizeArtifactReference is compact and untrusted path-focused", () => {
   const [ref] = extractArtifactReferences({
     text: "Failure in src/codeReferences.ts:44 from tool output with a long extra explanation that should not become a prompt-sized blob.",
