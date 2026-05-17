@@ -24,6 +24,7 @@ export type VibeMemoryToolDefinition = {
   label: string;
   description: string;
   parameters: JsonSchema;
+  prepareArguments?: (args: unknown) => unknown;
   execute: (
     toolCallId: string,
     params: Record<string, unknown>,
@@ -62,7 +63,7 @@ export function buildToolDefinitions(getRuntime: () => VibeMemoryRuntime | undef
       const normalized = { dryRun: true, records: [], ...params };
       const result = await callRuntime(getRuntime(), "import", normalized, { status: "preview", dryRun: normalized.dryRun });
       return textResult(`${UNTRUSTED_NOTICE}\nImport ${normalized.dryRun === false ? "result" : "preview"}: ${formatUnknown(result, "no items")}`, { status: "ok", result });
-    }),
+    }, prepareImportArguments),
     tool(TOOL_NAMES.meditate, "Meditate Vibe Memory", "Run bounded memory meditation and return candidate-only reflections.", schema({}), async (params) => {
       const result = await callRuntime(getRuntime(), "meditate", params, { status: "not-configured" });
       return textResult(`${UNTRUSTED_NOTICE}\nMeditation candidates: ${formatUnknown(result, "none")}`, { status: "ok", result });
@@ -88,8 +89,15 @@ export function buildToolDefinitions(getRuntime: () => VibeMemoryRuntime | undef
   ];
 }
 
-function tool(name: string, label: string, description: string, parameters: JsonSchema, handler: (params: Record<string, unknown>) => Promise<ToolResult>): VibeMemoryToolDefinition {
-  return { name, label, description, parameters, execute: async (_toolCallId, params) => handler(params ?? {}) };
+function tool(
+  name: string,
+  label: string,
+  description: string,
+  parameters: JsonSchema,
+  handler: (params: Record<string, unknown>) => Promise<ToolResult>,
+  prepareArguments?: (args: unknown) => unknown,
+): VibeMemoryToolDefinition {
+  return { name, label, description, parameters, prepareArguments, execute: async (_toolCallId, params) => handler(params ?? {}) };
 }
 
 async function callRuntime(runtime: VibeMemoryRuntime | undefined, method: keyof VibeMemoryRuntime, params: Record<string, unknown>, fallback: unknown): Promise<unknown> {
@@ -148,4 +156,29 @@ function booleanSchema(description: string): JsonSchema {
 
 function arraySchema(description: string): JsonSchema {
   return { type: "array", description, items: { type: "object", additionalProperties: true } };
+}
+
+function prepareImportArguments(args: unknown): unknown {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+  const input = args as Record<string, unknown>;
+  if (Array.isArray(input.records) || typeof input.records !== "string") return args;
+  const parsed = parseJsonishArray(input.records);
+  return parsed ? { ...input, records: parsed } : args;
+}
+
+function parseJsonishArray(value: string): unknown[] | undefined {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : undefined;
+  } catch {
+    try {
+      const normalized = value
+        .replace(/([{,]\s*)'([^']+)'\s*:/g, '$1"$2":')
+        .replace(/:\s*'([^']*)'/g, (_match, inner: string) => `: ${JSON.stringify(inner)}`);
+      const parsed = JSON.parse(normalized);
+      return Array.isArray(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 }

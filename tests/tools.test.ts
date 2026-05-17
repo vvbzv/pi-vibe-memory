@@ -97,6 +97,18 @@ test("import tool accepts supplied records and does not expose path scanning", a
   assert.match(result.content[0].text, /imported/i);
 });
 
+test("import tool prepares JSON-ish string records from weaker models", async () => {
+  const [importTool] = buildToolDefinitions(() => ({ import: async (params) => params })).filter((tool) => tool.name === TOOL_NAMES.import);
+
+  const prepared = importTool.prepareArguments?.({
+    source: "observational-memory",
+    dryRun: false,
+    records: "[{'id': 'legacy1', 'content': 'legacy imported memory'}]",
+  }) as Record<string, unknown>;
+
+  assert.deepEqual(prepared.records, [{ id: "legacy1", content: "legacy imported memory" }]);
+});
+
 test("tool callbacks preserve VibeMemoryRuntime method binding", async () => {
   const repository = {
     observations: [] as any[],
