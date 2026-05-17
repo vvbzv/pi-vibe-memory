@@ -145,7 +145,11 @@ test("client uses apiKeyEnv when apiKey is absent", async () => {
 
 test("client aborts timed out requests", async () => {
   const fetchMock = mockFetch((_url, init) => new Promise<Response>((_resolve, reject) => {
-    init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    init.signal?.addEventListener("abort", () => {
+      const error = new Error("aborted");
+      error.name = "AbortError";
+      reject(error);
+    });
   }));
   try {
     const client = new HindsightClient({ baseUrl: "http://localhost:8888", timeoutMs: 1 });
@@ -159,10 +163,14 @@ test("client aborts timed out requests", async () => {
   }
 });
 
-test("client throws useful http errors without leaking authorization", async () => {
-  const fetchMock = mockFetch(() => new Response("boom secret", { status: 500, statusText: "Server Error" }));
+test("client rejects invalid timeout values", () => {
+  assert.throws(() => new HindsightClient({ baseUrl: "http://localhost:8888", timeoutMs: 0 }), /timeoutMs/);
+});
+
+test("client throws useful http errors without leaking authorization or body secrets", async () => {
+  const fetchMock = mockFetch(() => new Response("boom apiKey=server-secret-token", { status: 500, statusText: "Server Error" }));
   try {
-    const client = new HindsightClient({ baseUrl: "http://localhost:8888", apiKey: "super-secret" });
+    const client = new HindsightClient({ baseUrl: "http://localhost:8888", apiKey: "client-test-token" });
 
     await assert.rejects(
       () => client.recall("pi", "query"),
@@ -170,8 +178,10 @@ test("client throws useful http errors without leaking authorization", async () 
         assert.ok(error instanceof HindsightError);
         assert.equal(error.status, 500);
         assert.match(error.message, /500/);
-        assert.match(error.message, /boom secret/);
-        assert.doesNotMatch(error.message, /super-secret/);
+        assert.match(error.message, /boom/);
+        assert.match(error.message, /\[REDACTED_SECRET\]/);
+        assert.doesNotMatch(error.message, /client-test-token|server-secret-token/);
+        assert.doesNotMatch(error.body ?? "", /server-secret-token/);
         return true;
       },
     );

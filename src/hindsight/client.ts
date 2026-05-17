@@ -1,3 +1,4 @@
+import { scrubSecrets } from "../scrub.js";
 import { PACKAGE_NAME } from "../constants.js";
 import type { HindsightBudget } from "../config.js";
 
@@ -79,7 +80,11 @@ export class HindsightClient {
     const configuredKey = options.apiKey?.trim();
     const envKey = options.apiKeyEnv ? process.env[options.apiKeyEnv]?.trim() : undefined;
     this.apiKey = configuredKey || envKey || undefined;
-    this.timeoutMs = options.timeoutMs ?? 1500;
+    const timeoutMs = options.timeoutMs ?? 1500;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("Hindsight timeoutMs must be a positive finite number");
+    }
+    this.timeoutMs = timeoutMs;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -200,7 +205,7 @@ function reflectOptionsToPayload(options: ReflectOptions): JsonObject {
 }
 
 async function throwHttpError(response: Response): Promise<never> {
-  const body = await response.text();
+  const body = scrubSecrets(await response.text());
   throw new HindsightError(`Hindsight request failed with ${response.status} ${response.statusText}: ${body}`, {
     status: response.status,
     body,
@@ -214,12 +219,12 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   try {
     return JSON.parse(text) as T;
   } catch (error) {
-    throw new HindsightError(`Hindsight returned invalid JSON: ${errorMessage(error)}`, { status: response.status, body: text, cause: error });
+    throw new HindsightError(`Hindsight returned invalid JSON: ${errorMessage(error)}`, { status: response.status, body: scrubSecrets(text), cause: error });
   }
 }
 
 function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  return (error instanceof DOMException || error instanceof Error) && error.name === "AbortError";
 }
 
 function errorMessage(error: unknown): string {
