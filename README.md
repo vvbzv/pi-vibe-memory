@@ -125,9 +125,48 @@ The doctor feature checks:
 - database health;
 - Hindsight availability;
 - safe namespaced tools/commands;
-- non-destructive revision safety.
+- non-destructive revision safety;
+- legacy replacement readiness for removing older memory packages.
 
 Hindsight offline is a warning, not a fatal error. Local memory continues.
+
+## Replacement migration workflow
+
+Use this workflow when replacing `npm:pi-observational-memory` and `npm:pi-continuous-learning` with `npm:pi-vibe-memory`:
+
+1. Run `/vibe-memory-doctor` and resolve any failed checks.
+2. Preview the continuous-learning migration with `/vibe-memory-import continuous-learning --dry-run`.
+3. Apply the import explicitly after reviewing the preview.
+4. Run `/vibe-memory-review` to approve or defer imported memory candidates.
+5. Run `/vibe-memory-doctor` again and confirm `safeToUninstallLegacy` is `true`.
+6. Remove `npm:pi-observational-memory` and `npm:pi-continuous-learning` from Pi settings.
+7. Keep only `npm:pi-vibe-memory` as the memory package.
+
+Final owner-mode settings should look like:
+
+```json
+{
+  "packages": ["npm:pi-vibe-memory"],
+  "vibeMemory": {
+    "enabled": true,
+    "mode": "owner",
+    "compaction": {
+      "enabled": true,
+      "mode": "owner"
+    },
+    "hindsight": {
+      "enabled": true,
+      "source": "rest",
+      "baseUrl": "http://localhost:8888",
+      "bank": "pi",
+      "recallScope": "hybrid",
+      "bankWideLimit": 1
+    }
+  }
+}
+```
+
+Do not run another memory owner beside `pi-vibe-memory` owner mode.
 
 ## Development
 

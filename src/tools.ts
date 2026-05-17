@@ -86,9 +86,9 @@ export function buildToolDefinitions(getRuntime: () => VibeMemoryRuntime | undef
       const result = await callRuntime(getRuntime(), "revise", params, { status: "revised" });
       return textResult(`${UNTRUSTED_NOTICE}\nNon-destructive revision recorded: ${formatUnknown(result, "revised")}`, { status: "revised", result });
     }),
-    tool(TOOL_NAMES.doctor, "Vibe Memory Doctor", "Run pi-vibe-memory health and safety checks.", schema({}), async (params) => {
+    tool(TOOL_NAMES.doctor, "Vibe Memory Doctor", "Run pi-vibe-memory health and safety checks.", schema({ migrationStatus: objectSchema("Optional legacy migration status evidence") }), async (params) => {
       const runtime = getRuntime();
-      const result = runtime?.doctor ? await runtime.doctor(params) : runDoctorChecks({ toolNames: Object.values(TOOL_NAMES), commandNames: Object.values(COMMAND_NAMES) });
+      const result = runtime?.doctor ? await runtime.doctor(params) : runDoctorChecks({ toolNames: Object.values(TOOL_NAMES), commandNames: Object.values(COMMAND_NAMES), migrationStatus: params.migrationStatus as any });
       return textResult(formatDoctor(result), result);
     }),
   ];
@@ -169,6 +169,10 @@ function stringArraySchema(description: string): JsonSchema {
 
 function arraySchema(description: string): JsonSchema {
   return { type: "array", description, items: { type: "object", additionalProperties: true } };
+}
+
+function objectSchema(description: string): JsonSchema {
+  return { type: "object", description, additionalProperties: true };
 }
 
 function prepareImportArguments(args: unknown): unknown {

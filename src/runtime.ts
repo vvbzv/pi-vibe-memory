@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { extractArtifactReferences } from "./codeReferences.js";
-import { ALLOWED_MEMORY_KINDS, MEMORY_SCOPES } from "./constants.js";
+import { ALLOWED_MEMORY_KINDS, COMMAND_NAMES, MEMORY_SCOPES, TOOL_NAMES } from "./constants.js";
 import { buildCompactionSummary, shouldSkipCustomCompaction } from "./compaction.js";
 import { loadContinuousLearningDirectory, mapContinuousLearningFact, mapContinuousLearningInstinct } from "./importers/continuousLearning.js";
 import { mapLapisArtifact } from "./importers/lapis.js";
@@ -395,11 +395,15 @@ export class VibeMemoryRuntime {
     return { status: result.failed > 0 ? "partial" : "complete", ...result };
   }
 
-  async doctor(): Promise<ReturnType<typeof runDoctorChecks>> {
+  async doctor(params: JsonRecord = {}): Promise<ReturnType<typeof runDoctorChecks>> {
     return runDoctorChecks({
       settings: this.settings,
       conflicts: this.conflicts,
+      database: { status: "ok", message: "SQLite repository configured" },
       hindsight: this.hindsight ? { status: "ok", message: "Hindsight client configured" } : { status: "offline", message: "Hindsight client not configured; local memory can continue." },
+      toolNames: Object.values(TOOL_NAMES),
+      commandNames: Object.values(COMMAND_NAMES),
+      migrationStatus: params.migrationStatus as any,
     });
   }
 

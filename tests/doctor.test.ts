@@ -13,6 +13,9 @@ test("runDoctorChecks passes for safe defaults and healthy probes", () => {
     toolNames: Object.values(TOOL_NAMES),
     commandNames: Object.values(COMMAND_NAMES),
     revision: DEFAULT_SETTINGS.revision,
+    migrationStatus: {
+      continuousLearning: { dryRunCompleted: true, applied: true, needsReview: 0 },
+    },
   });
 
   assert.equal(result.ok, true);
@@ -84,6 +87,62 @@ test("runDoctorChecks accepts omitted optional probes as deterministic passes", 
   });
 
   assert.equal(result.ok, true);
+  assert.equal(result.safeToUninstallLegacy, false);
+  assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "fail");
   assert.equal(result.checks.find((check) => check.name === "database health")?.status, "pass");
   assert.equal(result.checks.find((check) => check.name === "hindsight health")?.status, "pass");
+});
+
+test("runDoctorChecks reports legacy replacement readiness when migration is known", () => {
+  const result = runDoctorChecks({
+    settings: DEFAULT_SETTINGS,
+    conflicts: [],
+    database: { status: "ok", message: "SQLite reachable" },
+    hindsight: { status: "offline", message: "Hindsight server is not running" },
+    toolNames: Object.values(TOOL_NAMES),
+    commandNames: Object.values(COMMAND_NAMES),
+    migrationStatus: {
+      continuousLearning: { dryRunCompleted: true, applied: true, needsReview: 0 },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.safeToUninstallLegacy, true);
+  assert.deepEqual(result.legacyRemovalAdvice, [
+    "pi-vibe-memory is ready to replace npm:pi-observational-memory and npm:pi-continuous-learning.",
+    "Remove the legacy packages from Pi settings and keep only npm:pi-vibe-memory as the memory owner.",
+  ]);
+  assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "pass");
+});
+
+test("runDoctorChecks blocks legacy uninstall readiness when legacy owners are active", () => {
+  const result = runDoctorChecks({
+    settings: DEFAULT_SETTINGS,
+    conflicts: ["pi-observational-memory appears active"],
+    database: { status: "ok", message: "SQLite reachable" },
+    toolNames: Object.values(TOOL_NAMES),
+    commandNames: Object.values(COMMAND_NAMES),
+    migrationStatus: {
+      continuousLearning: { dryRunCompleted: true, applied: true, needsReview: 0 },
+    },
+  });
+
+  assert.equal(result.safeToUninstallLegacy, false);
+  assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "fail");
+  assert.ok(result.legacyRemovalAdvice.some((item) => item.includes("Resolve competing memory owners")));
+});
+
+test("runDoctorChecks blocks legacy uninstall readiness when migration status is missing", () => {
+  const result = runDoctorChecks({
+    settings: DEFAULT_SETTINGS,
+    conflicts: [],
+    database: { status: "ok", message: "SQLite reachable" },
+    toolNames: Object.values(TOOL_NAMES),
+    commandNames: Object.values(COMMAND_NAMES),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.safeToUninstallLegacy, false);
+  assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "warn");
+  assert.ok(result.legacyRemovalAdvice.some((item) => item.includes("Run /vibe-memory-import continuous-learning --dry-run")));
 });

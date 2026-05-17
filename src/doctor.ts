@@ -10,6 +10,9 @@ type SettingsInput = {
   promptBudgetChars?: number;
   captureRawPrompts?: boolean;
   revision?: RevisionInput;
+  compaction?: {
+    mode?: string;
+  };
 };
 
 type RevisionInput = {
@@ -25,6 +28,15 @@ type ProbeInput<T extends string> = {
   details?: unknown;
 };
 
+type MigrationStatusInput = {
+  continuousLearning?: {
+    dryRunCompleted?: boolean;
+    applied?: boolean;
+    status?: string;
+    needsReview?: number;
+  };
+};
+
 export type DoctorCheck = {
   name: string;
   status: CheckStatus;
@@ -35,6 +47,8 @@ export type DoctorCheck = {
 export type DoctorResult = {
   ok: boolean;
   checks: DoctorCheck[];
+  safeToUninstallLegacy: boolean;
+  legacyRemovalAdvice: string[];
 };
 
 export type DoctorInput = {
@@ -45,11 +59,100 @@ export type DoctorInput = {
   toolNames?: readonly string[];
   commandNames?: readonly string[];
   revision?: RevisionInput;
+  migrationStatus?: MigrationStatusInput;
 };
 
 const TOKEN_LIGHT_PROMPT_BUDGET = 3500;
 const FAIL_PROMPT_BUDGET = 8000;
 const FORBIDDEN_NAME_PATTERN = /(^|[_-])(forget|delete)($|[_-])|^recall$|(^|[_-])fact[_-]|(^|[_-])instinct[_-]/i;
+
+const REQUIRED_LEGACY_REPLACEMENT_TOOLS = [
+  TOOL_NAMES.review,
+  TOOL_NAMES.doctor,
+  TOOL_NAMES.import,
+  TOOL_NAMES.remember,
+  TOOL_NAMES.recall,
+] as const;
+
+const REQUIRED_LEGACY_REPLACEMENT_COMMANDS = [
+  COMMAND_NAMES.review,
+  COMMAND_NAMES.doctor,
+  COMMAND_NAMES.import,
+] as const;
+
+const READY_TO_REMOVE_LEGACY_ADVICE = [
+  "pi-vibe-memory is ready to replace npm:pi-observational-memory and npm:pi-continuous-learning.",
+  "Remove the legacy packages from Pi settings and keep only npm:pi-vibe-memory as the memory owner.",
+] as const;
+
+function missingNames(required: readonly string[], available: readonly string[] | undefined): string[] {
+  const names = new Set(available ?? required);
+  return required.filter((name) => !names.has(name));
+}
+
+function hasKnownMigrationStatus(migrationStatus: MigrationStatusInput | undefined): boolean {
+  const continuousLearning = migrationStatus?.continuousLearning;
+  if (!continuousLearning) return false;
+  if (continuousLearning.dryRunCompleted === true || continuousLearning.applied === true) return true;
+  return typeof continuousLearning.status === "string" && ["preview", "imported", "complete", "completed"].includes(continuousLearning.status);
+}
+
+function checkLegacyReplacementReadiness(input: DoctorInput): { check: DoctorCheck; safeToUninstallLegacy: boolean; legacyRemovalAdvice: string[] } {
+  const blockers: string[] = [];
+  const advice: string[] = [];
+
+  if (input.settings?.enabled !== true) blockers.push("Enable vibeMemory.enabled.");
+  if (input.settings?.mode !== "owner") blockers.push('Set vibeMemory.mode to "owner".');
+  if (input.settings?.compaction?.mode !== "owner") blockers.push('Set vibeMemory.compaction.mode to "owner".');
+
+  const missingTools = missingNames(REQUIRED_LEGACY_REPLACEMENT_TOOLS, input.toolNames);
+  if (missingTools.length > 0) blockers.push(`Register required tools: ${missingTools.join(", ")}.`);
+
+  const missingCommands = missingNames(REQUIRED_LEGACY_REPLACEMENT_COMMANDS, input.commandNames);
+  if (missingCommands.length > 0) blockers.push(`Register required commands: ${missingCommands.join(", ")}.`);
+
+  if ((input.conflicts ?? []).length > 0) blockers.push("Resolve competing memory owners before removing legacy packages.");
+  if (input.database?.status !== "ok") blockers.push("Run doctor with a passing database health probe.");
+
+  const migrationKnown = hasKnownMigrationStatus(input.migrationStatus);
+  if (!migrationKnown) advice.push("Run /vibe-memory-import continuous-learning --dry-run, then apply the import explicitly when the preview is correct.");
+
+  if (blockers.length > 0) {
+    return {
+      safeToUninstallLegacy: false,
+      legacyRemovalAdvice: [...blockers, ...advice],
+      check: {
+        name: "Legacy replacement readiness",
+        status: "fail",
+        message: "Not safe to uninstall legacy memory packages yet.",
+        details: [...blockers, ...advice],
+      },
+    };
+  }
+
+  if (advice.length > 0) {
+    return {
+      safeToUninstallLegacy: false,
+      legacyRemovalAdvice: advice,
+      check: {
+        name: "Legacy replacement readiness",
+        status: "warn",
+        message: "Migration status is not known, so legacy removal is not ready yet.",
+        details: advice,
+      },
+    };
+  }
+
+  return {
+    safeToUninstallLegacy: true,
+    legacyRemovalAdvice: [...READY_TO_REMOVE_LEGACY_ADVICE],
+    check: {
+      name: "Legacy replacement readiness",
+      status: "pass",
+      message: "Safe to uninstall legacy memory packages after settings are updated.",
+    },
+  };
+}
 
 function checkSettings(settings: SettingsInput | undefined): DoctorCheck {
   const issues: string[] = [];
@@ -146,7 +249,8 @@ function checkRevisionSafety(settings: SettingsInput | undefined, revision: Revi
 }
 
 export function runDoctorChecks(input: DoctorInput = {}): DoctorResult {
-  const checks = [
+  const readiness = checkLegacyReplacementReadiness(input);
+  const baseChecks = [
     checkSettings(input.settings),
     checkConflicts(input.conflicts),
     checkDatabase(input.database),
@@ -154,9 +258,12 @@ export function runDoctorChecks(input: DoctorInput = {}): DoctorResult {
     checkSafetyNames(input.toolNames, input.commandNames),
     checkRevisionSafety(input.settings, input.revision),
   ];
+  const checks = [...baseChecks, readiness.check];
 
   return {
-    ok: checks.every((check) => check.status !== "fail"),
+    ok: baseChecks.every((check) => check.status !== "fail"),
     checks,
+    safeToUninstallLegacy: readiness.safeToUninstallLegacy,
+    legacyRemovalAdvice: readiness.legacyRemovalAdvice,
   };
 }
