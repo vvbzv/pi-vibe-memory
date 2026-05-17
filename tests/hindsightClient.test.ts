@@ -190,6 +190,52 @@ test("client throws useful http errors without leaking authorization or body sec
   }
 });
 
+
+test("client scrubs fetch rejection messages and retained causes", async () => {
+  const fetchMock = mockFetch(() => {
+    throw new Error("network failed apiKey=fetch-secret-token");
+  });
+  try {
+    const client = new HindsightClient({ baseUrl: "http://localhost:8888" });
+
+    await assert.rejects(
+      () => client.health(),
+      (error: unknown) => {
+        assert.ok(error instanceof HindsightError);
+        assert.match(error.message, /\[REDACTED_SECRET\]/);
+        assert.doesNotMatch(error.message, /fetch-secret-token/);
+        assert.ok(error.cause instanceof Error);
+        assert.match(error.cause.message, /\[REDACTED_SECRET\]/);
+        assert.doesNotMatch(error.cause.message, /fetch-secret-token/);
+        return true;
+      },
+    );
+  } finally {
+    fetchMock.restore();
+  }
+});
+
+test("client scrubs invalid JSON causes", async () => {
+  const fetchMock = mockFetch(() => new Response("apiKey=invalid-json-secret", { status: 200 }));
+  try {
+    const client = new HindsightClient({ baseUrl: "http://localhost:8888" });
+
+    await assert.rejects(
+      () => client.health(),
+      (error: unknown) => {
+        assert.ok(error instanceof HindsightError);
+        assert.ok(error.cause instanceof Error);
+        assert.match(error.message, /\[REDACTED_SECRET\]/);
+        assert.match(error.cause.message, /\[REDACTED_SECRET\]/);
+        assert.doesNotMatch(error.cause.message, /invalid-json-secret/);
+        return true;
+      },
+    );
+  } finally {
+    fetchMock.restore();
+  }
+});
+
 test("bank helpers create deterministic ids and tags", () => {
   assert.equal(normalizeBankId(""), "pi");
   assert.equal(normalizeBankId(" team/pi "), "team/pi");

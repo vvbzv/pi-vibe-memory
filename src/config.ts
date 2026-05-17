@@ -19,6 +19,7 @@ export interface NormalizedVibeMemorySettings {
   captureRawPrompts: boolean;
   ignoredPathPatterns: string[];
   strictSingleOwner: boolean;
+  configWarnings: string[];
   compaction: {
     enabled: boolean;
     mode: VibeMemoryCompactionMode;
@@ -93,6 +94,7 @@ export const DEFAULT_SETTINGS: NormalizedVibeMemorySettings = {
   captureRawPrompts: false,
   ignoredPathPatterns: [],
   strictSingleOwner: false,
+  configWarnings: [],
   compaction: {
     enabled: true,
     mode: "owner",
@@ -180,6 +182,14 @@ function assertOneOf<T extends string>(name: string, value: unknown, allowed: re
   return value as T;
 }
 
+function validateDbPath(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value.trim()) throw new Error("dbPath must be a safe relative path");
+  const trimmed = value.trim();
+  if (path.isAbsolute(trimmed) || trimmed.split(/[\/]+/).includes("..")) throw new Error("dbPath must be a safe relative path");
+  return trimmed;
+}
+
 function optionalStringArray(name: string, value: unknown): string[] {
   if (value == null) return [];
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
@@ -211,11 +221,11 @@ export function normalizeSettings(raw: JsonObject | undefined): NormalizedVibeMe
 
   const mode = assertOneOf("mode", merged.mode, ["owner", "passive", "toolsOnly"]);
   const captureToolOutput = assertOneOf("captureToolOutput", merged.captureToolOutput, ["off", "errors", "summaries"]);
-
   return {
     ...merged,
     enabled: merged.enabled !== false,
     mode,
+    dbPath: validateDbPath(merged.dbPath),
     promptBudgetChars: assertPositiveInteger("promptBudgetChars", merged.promptBudgetChars),
     localObservationLimit: assertPositiveInteger("localObservationLimit", merged.localObservationLimit),
     hindsightRecallLimit: assertPositiveInteger("hindsightRecallLimit", merged.hindsightRecallLimit),
@@ -223,6 +233,7 @@ export function normalizeSettings(raw: JsonObject | undefined): NormalizedVibeMe
     captureRawPrompts: merged.captureRawPrompts === true,
     ignoredPathPatterns: optionalStringArray("ignoredPathPatterns", merged.ignoredPathPatterns),
     strictSingleOwner: merged.strictSingleOwner === true,
+    configWarnings: optionalStringArray("configWarnings", merged.configWarnings),
     compaction: {
       ...merged.compaction,
       enabled: merged.compaction.enabled !== false,
@@ -324,7 +335,16 @@ async function applyMcpHindsightSettings(
   const mcpJson = await readJsonObject(mcpPath);
   const servers = isPlainObject(mcpJson.mcpServers) ? mcpJson.mcpServers : {};
   const server = servers[settings.hindsight.mcpServer];
-  if (!isPlainObject(server)) return settings;
+  if (!isPlainObject(server)) {
+    return {
+      ...settings,
+      configWarnings: [
+        ...settings.configWarnings,
+        `Hindsight MCP source requested but server "${settings.hindsight.mcpServer}" was not found; Hindsight disabled instead of falling back to localhost.`,
+      ],
+      hindsight: { ...settings.hindsight, enabled: false },
+    };
+  }
 
   const url = typeof server.url === "string" ? server.url : undefined;
   const baseUrl = url ? deriveRestBaseUrl(url) : settings.hindsight.baseUrl;
@@ -353,8 +373,10 @@ function deriveRestBaseUrl(rawUrl: string): string {
 
 function deriveBankFromMcpUrl(rawUrl: string): string | undefined {
   const parsed = new URL(rawUrl);
-  const match = parsed.pathname.match(/\/mcp\/([^/?#]+)\/?$/);
-  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  const mcpIndex = segments.indexOf("mcp");
+  const bank = mcpIndex >= 0 ? segments[mcpIndex + 1] : undefined;
+  return bank ? decodeURIComponent(bank) : undefined;
 }
 
 function extractBearerToken(headers: unknown): string | undefined {
@@ -375,11 +397,13 @@ export function detectConflicts(settingsJson: JsonObject): string[] {
   const hasPackage = (needle: string) => packages.some((entry) => entry.toLowerCase().includes(needle.toLowerCase()));
 
   const observationalMemory = settingsJson["observational-memory"];
-  if (hasPackage("pi-observational-memory") || (isPlainObject(observationalMemory) && observationalMemory.passive !== true)) {
+  if ((hasPackage("pi-observational-memory") && !(isPlainObject(observationalMemory) && observationalMemory.passive === true)) || (isPlainObject(observationalMemory) && observationalMemory.passive !== true)) {
     conflicts.push("pi-observational-memory appears active; set observational-memory.passive=true or remove the package.");
   }
 
-  if (hasPackage("pi-continuous-learning") || settingsJson.continuousLearning) {
+  const continuousLearning = settingsJson.continuousLearning;
+  const continuousLearningDisabled = isPlainObject(continuousLearning) && continuousLearning.enabled === false;
+  if ((hasPackage("pi-continuous-learning") && !continuousLearningDisabled) || (isPlainObject(continuousLearning) ? continuousLearning.enabled !== false : Boolean(continuousLearning))) {
     conflicts.push("pi-continuous-learning may inject competing learned behavior; disable or remove it.");
   }
 

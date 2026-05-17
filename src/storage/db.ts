@@ -14,6 +14,7 @@ export function openVibeMemoryDb(dbPath: string): VibeMemoryDb {
 
   assertFts5Support(db);
   migrate(db);
+  ensureMetadataTable(db);
 
   return db;
 }
@@ -39,4 +40,15 @@ function migrate(db: VibeMemoryDb): void {
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   });
   applySchema();
+}
+
+
+function ensureMetadataTable(db: VibeMemoryDb): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repository_metadata (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
 }

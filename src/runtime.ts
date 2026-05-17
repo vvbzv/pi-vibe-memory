@@ -9,7 +9,7 @@ import { mapLapisArtifact } from "./importers/lapis.js";
 import { mapObservationalMemoryRecord } from "./importers/observationalMemory.js";
 import type { NormalizedVibeMemorySettings } from "./config.js";
 import { runDoctorChecks } from "./doctor.js";
-import { normalizeBankId } from "./hindsight/banks.js";
+import { createObservationDocumentId, normalizeBankId } from "./hindsight/banks.js";
 import { enqueueObservationSync, flushSyncQueue } from "./hindsight/sync.js";
 import {
   buildMeditationPrompt,
@@ -49,6 +49,9 @@ export interface RuntimeRepository {
   setInstinctCandidateStatus?(id: string, status: any): void;
   startMeditationRun?(input: { id: string; workspaceId: string; sessionId?: string; trigger: string; status: string; inputObservationIds?: string[] }): void;
   finishMeditationRun?(input: { id: string; status: string; error?: string }): void;
+  updateObservationReview?(input: { id: string; status: any; scope?: string; tags?: string[] }): ObservationRecord | undefined;
+  setMetadata?(key: string, value: unknown): void;
+  getMetadata?(key: string): unknown;
 }
 
 export interface RuntimeHindsight {
@@ -146,8 +149,9 @@ export class VibeMemoryRuntime {
   async beforeAgentStart(input: BeforeAgentStartInput): Promise<BeforeAgentStartInput> {
     if (!this.settings.enabled || this.injectionDisabled || this.settings.mode === "passive" || this.settings.mode === "toolsOnly") return input;
 
-    const local = this.localMemories(input.prompt);
-    const workspace = await this.recallHindsight(input.prompt);
+    const safePrompt = scrubSecrets(input.prompt, { maxChars: 600 });
+    const local = this.localMemories(safePrompt);
+    const workspace = await this.recallHindsight(safePrompt);
     const block = renderMemoryBlock({
       budgetChars: this.settings.promptBudgetChars,
       instincts: this.listPromptInstincts(),
@@ -162,7 +166,8 @@ export class VibeMemoryRuntime {
   }
 
   async beforeCompact(event: BeforeCompactInput): Promise<BeforeCompactResult | undefined> {
-    if (!this.settings.enabled || !this.settings.compaction.enabled || this.settings.compaction.mode !== "owner") return undefined;
+    if (!this.settings.enabled || this.settings.mode !== "owner" || !this.settings.compaction.enabled || this.settings.compaction.mode !== "owner") return undefined;
+    if (this.conflicts.length > 0) return undefined;
     if (shouldSkipCustomCompaction(event.branchEntries ?? [])) return undefined;
 
     try {
@@ -398,12 +403,13 @@ export class VibeMemoryRuntime {
   async doctor(params: JsonRecord = {}): Promise<ReturnType<typeof runDoctorChecks>> {
     return runDoctorChecks({
       settings: this.settings,
+      configWarnings: this.settings.configWarnings,
       conflicts: this.conflicts,
       database: { status: "ok", message: "SQLite repository configured" },
-      hindsight: this.hindsight ? { status: "ok", message: "Hindsight client configured" } : { status: "offline", message: "Hindsight client not configured; local memory can continue." },
+      hindsight: await this.probeHindsightHealth(),
       toolNames: Object.values(TOOL_NAMES),
       commandNames: Object.values(COMMAND_NAMES),
-      migrationStatus: params.migrationStatus as any,
+      migrationStatus: isRecord(params.migrationStatus) ? params.migrationStatus as any : this.repository.getMetadata?.("migrationStatus") as any,
     });
   }
 
@@ -420,7 +426,7 @@ export class VibeMemoryRuntime {
     }) ?? [];
     if (!this.hindsight?.recall || this.settings.hindsight.enabled === false) return local;
     try {
-      return [...local, ...await this.recallHindsight(query)];
+      return mergeRecallResults(local, await this.recallHindsight(query));
     } catch {
       return local;
     }
@@ -461,8 +467,8 @@ export class VibeMemoryRuntime {
 
   async import(params: JsonRecord): Promise<JsonRecord> {
     const source = requiredString(params.source, "source");
-    const loaded = await this.loadImportRecords(source, params);
     const dryRun = params.dryRun !== false;
+    const loaded = await this.loadImportRecords(source, params);
     const mapped = this.mapImportRecords(source, loaded.records);
     const report = {
       source,
@@ -490,6 +496,12 @@ export class VibeMemoryRuntime {
       } else if (isRecord(item) && typeof item.trigger === "string" && typeof item.action === "string") {
         this.repository.addInstinctCandidate?.(item as unknown as InstinctCandidateInput);
       }
+    }
+
+    if (source === "continuous-learning" || source === "pi-continuous-learning") {
+      this.repository.setMetadata?.("migrationStatus", {
+        continuousLearning: { dryRunCompleted: true, applied: true, status: "imported", needsReview: report.needsReview },
+      });
     }
 
     return { status: "imported", ...report, dryRun: false };
@@ -542,6 +554,8 @@ export class VibeMemoryRuntime {
       relation: "supersedes",
       reason,
     });
+    const old = this.repository.getObservation?.(oldId);
+    if (old) this.enqueueObservation({ ...old, status: "superseded" });
     this.enqueueObservation(observation);
     return { status: "revised", id: observation.id, oldId };
   }
@@ -553,8 +567,10 @@ export class VibeMemoryRuntime {
     }
     if (Array.isArray(params.records)) return { records: params.records, factsFound: 0, instinctsFound: 0, warnings: [] };
 
-    const rootPath = typeof params.path === "string" && params.path.trim()
-      ? params.path.trim()
+    const hasCustomPath = typeof params.path === "string" && params.path.trim();
+    if (hasCustomPath && params.explicit !== true) throw new Error("custom import path requires explicit=true");
+    const rootPath = hasCustomPath
+      ? validateCustomImportPath(params.path)
       : path.join(os.homedir(), ".pi", "continuous-learning");
     const loaded = await loadContinuousLearningDirectory(rootPath);
     return {
@@ -610,14 +626,14 @@ export class VibeMemoryRuntime {
       const memories: PromptHindsightMemory[] = [];
       for (const call of calls) {
         if (call.limit <= 0) continue;
-        const response = await this.hindsight.recall(this.bankId(), query, {
+        const response = await this.hindsight.recall(this.bankId(), safeRecallQuery(query), {
           budget: this.settings.hindsight.defaultBudget,
           limit: call.limit,
           ...(call.tags ? { tags: call.tags } : {}),
         });
         memories.push(...parseHindsightMemories(response, this.bankId()).slice(0, call.limit));
       }
-      return memories.slice(0, this.settings.hindsightRecallLimit);
+      return dedupeHindsightMemories(memories).slice(0, this.settings.hindsightRecallLimit);
     } catch {
       return [];
     }
@@ -693,7 +709,23 @@ export class VibeMemoryRuntime {
   private bankId(): string {
     return normalizeBankId(this.settings.hindsight.workspaceBank ?? this.settings.hindsight.bank);
   }
+
+  private async probeHindsightHealth(): Promise<{ status: "ok" | "offline"; message: string; details?: unknown }> {
+    if (!this.hindsight) return { status: "offline", message: "Hindsight client not configured; local memory can continue." };
+    if (!this.hindsight.health) return { status: "offline", message: "Hindsight health probe is not configured; local memory can continue." };
+    try {
+      const timeoutMs = this.settings.hindsight.timeoutMs;
+      const details = await Promise.race([
+        this.hindsight.health(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)),
+      ]);
+      return { status: "ok", message: "Hindsight health probe passed.", details };
+    } catch (error) {
+      return { status: "offline", message: `Hindsight health probe failed; treating Hindsight as offline. ${errorMessage(error)}` };
+    }
+  }
 }
+
 
 function parseHindsightMemories(value: unknown, fallbackBank: string): PromptHindsightMemory[] {
   const items = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.memories) ? value.memories : isRecord(value) && Array.isArray(value.items) ? value.items : [];
@@ -701,15 +733,72 @@ function parseHindsightMemories(value: unknown, fallbackBank: string): PromptHin
     if (!isRecord(item)) return [];
     const content = stringValue(item.content) ?? stringValue(item.text) ?? stringValue(item.memory);
     if (!content) return [];
+    const documentId = stringValue(item.documentId) ?? stringValue(item.document_id);
     return [{
-      id: stringValue(item.id) ?? stringValue(item.documentId) ?? `hs_${hash(content)}`,
-      content,
+      id: stringValue(item.id) ?? documentId ?? `hs_${hash(content)}`,
+      documentId,
+      content: scrubSecrets(content, { maxChars: 1200 }),
       bank: stringValue(item.bank) ?? fallbackBank,
       tags: Array.isArray(item.tags) ? item.tags.map(String) : undefined,
       confidence: typeof item.confidence === "number" ? item.confidence : undefined,
       status: stringValue(item.status),
     }];
   });
+}
+
+function validateCustomImportPath(value: unknown): string {
+  const rootPath = requiredString(value, "path");
+  if (rootPath === path.parse(rootPath).root || rootPath.includes("..")) {
+    throw new Error("custom import path is unsafe");
+  }
+  return rootPath;
+}
+
+function safeRecallQuery(value: string): string {
+  return scrubSecrets(value.replace(/\s+/g, " ").trim(), { maxChars: 600 });
+}
+
+function mergeRecallResults(local: ObservationRecord[], hindsight: PromptHindsightMemory[]): unknown[] {
+  const localIds = new Set(local.map((item) => createObservationDocumentId(item.id)));
+  const localContentKeys = new Set(local.map((item) => contentKey(item.content)));
+  const out: unknown[] = [...local];
+  for (const item of hindsight) {
+    const documentId = (item as PromptHindsightMemory & { documentId?: string }).documentId;
+    if (documentId && localIds.has(documentId)) continue;
+    if (localContentKeys.has(contentKey(item.content))) continue;
+    out.push(item);
+  }
+  return out;
+}
+
+function dedupeHindsightMemories(memories: PromptHindsightMemory[]): PromptHindsightMemory[] {
+  const byKey = new Map<string, PromptHindsightMemory>();
+  for (const memory of memories) {
+    const documentId = (memory as PromptHindsightMemory & { documentId?: string }).documentId;
+    const keys = [memory.id, documentId, `content:${contentKey(memory.content)}`].filter((key): key is string => typeof key === "string" && key.length > 0);
+    const existing = keys.map((key) => byKey.get(key)).find(Boolean);
+    const winner = preferTaggedMemory(existing, memory);
+    for (const key of keys) byKey.set(key, winner);
+  }
+  const out: PromptHindsightMemory[] = [];
+  const seen = new Set<PromptHindsightMemory>();
+  for (const memory of byKey.values()) {
+    if (seen.has(memory)) continue;
+    seen.add(memory);
+    out.push(memory);
+  }
+  return out;
+}
+
+function preferTaggedMemory(existing: PromptHindsightMemory | undefined, next: PromptHindsightMemory): PromptHindsightMemory {
+  if (!existing) return next;
+  const existingTagged = existing.tags?.includes("pi-vibe-memory") === true;
+  const nextTagged = next.tags?.includes("pi-vibe-memory") === true;
+  return !existingTagged && nextTagged ? next : existing;
+}
+
+function contentKey(content: string): string {
+  return hash(content.trim().replace(/\s+/g, " ").toLowerCase());
 }
 
 function extractText(value: unknown): string {

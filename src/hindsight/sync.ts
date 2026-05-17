@@ -1,5 +1,6 @@
 import { createArtifactDocumentId, createObservationDocumentId } from "./banks.js";
 import type { MemoryItemInput } from "./client.js";
+import { scrubSecrets } from "../scrub.js";
 import type { ObservationRecord, SyncJobInput, SyncJobRecord, VibeMemoryRepository } from "../storage/repository.js";
 
 export { createArtifactDocumentId as buildArtifactDocumentId } from "./banks.js";
@@ -90,20 +91,17 @@ export async function flushSyncQueue(options: FlushSyncQueueOptions): Promise<Fl
   const jobs = options.repository.listPendingSyncJobs(limit);
   const result: FlushSyncQueueResult = { processed: jobs.length, succeeded: 0, failed: 0 };
 
-  const groups = groupRetainJobs(jobs);
-  for (const group of groups) {
+  for (const job of jobs) {
     try {
-      await options.hindsight.retainBatch(group.bankId, group.items);
-      for (const job of group.jobs) {
-        options.repository.markSyncJobDone(job.id);
-        result.succeeded += 1;
-      }
+      if (job.operation !== "retain_observation") throw new Error(`Unsupported sync operation: ${job.operation}`);
+      const payload = parseRetainPayload(job.payload);
+      await options.hindsight.retainBatch(payload.bankId, payload.items);
+      options.repository.markSyncJobDone(job.id);
+      result.succeeded += 1;
     } catch (error) {
-      const message = errorMessage(error);
-      for (const job of group.jobs) {
-        options.repository.markSyncJobFailed(job.id, message);
-        result.failed += 1;
-      }
+      const message = scrubSecrets(errorMessage(error), { maxChars: 500 });
+      options.repository.markSyncJobFailed(job.id, message);
+      result.failed += 1;
       if (options.strict === true) throw error;
     }
   }
@@ -126,38 +124,17 @@ function buildObservationContent(observation: ObservationRecord): string {
   ].join("\n");
 }
 
-function groupRetainJobs(jobs: SyncJobRecord[]): Array<{ bankId: string; items: MemoryItemInput[]; jobs: SyncJobRecord[] }> {
-  const byBank = new Map<string, { bankId: string; items: MemoryItemInput[]; jobs: SyncJobRecord[] }>();
-
-  for (const job of jobs) {
-    const payload = parseRetainPayload(job.payload);
-    if (!payload) {
-      byBank.set(`__invalid__:${job.id}`, { bankId: "", items: [], jobs: [job] });
-      continue;
-    }
-
-    const existing = byBank.get(payload.bankId);
-    if (existing) {
-      existing.items.push(...payload.items);
-      existing.jobs.push(job);
-    } else {
-      byBank.set(payload.bankId, { bankId: payload.bankId, items: [...payload.items], jobs: [job] });
-    }
-  }
-
-  return [...byBank.values()];
-}
-
-function parseRetainPayload(payload: unknown): RetainObservationPayload | undefined {
-  if (!isRecord(payload)) return undefined;
-  if (typeof payload.bankId !== "string" || payload.bankId.trim() === "") return undefined;
-  if (!Array.isArray(payload.items) || payload.items.length === 0) return undefined;
-  return { bankId: payload.bankId, items: payload.items.map(toMemoryItem) };
+function parseRetainPayload(payload: unknown): RetainObservationPayload {
+  if (!isRecord(payload)) throw new Error("sync job payload must be an object");
+  const bankId = typeof payload.bankId === "string" ? payload.bankId.trim() : "";
+  if (!bankId) throw new Error("sync job payload bankId must be non-empty");
+  if (!Array.isArray(payload.items) || payload.items.length === 0) throw new Error("sync job payload items must be non-empty");
+  return { bankId, items: payload.items.map(toMemoryItem) };
 }
 
 function toMemoryItem(item: unknown): MemoryItemInput {
-  if (!isRecord(item) || typeof item.content !== "string") {
-    throw new Error("sync job payload item must include string content");
+  if (!isRecord(item) || typeof item.content !== "string" || item.content.trim() === "") {
+    throw new Error("sync job payload item must include non-empty string content");
   }
 
   const memoryItem: MemoryItemInput = { content: item.content };

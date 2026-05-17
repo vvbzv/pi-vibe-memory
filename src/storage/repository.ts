@@ -260,6 +260,8 @@ export class VibeMemoryRepository {
   searchObservations(query: string, options: ObservationSearchOptions): ObservationRecord[] {
     const limit = boundedLimit(options.limit);
     const statuses = options.status ? [options.status] : options.includeInactive || options.includeHistorical ? null : PROMPT_OBSERVATION_STATUSES;
+    const ftsQuery = sanitizeFtsQuery(query);
+    if (!ftsQuery) return [];
     const rows = this.db.prepare(`
       SELECT o.*
       FROM observations_fts f
@@ -268,10 +270,10 @@ export class VibeMemoryRepository {
         AND f.workspace_id = @workspaceId
         AND (@kind IS NULL OR o.kind = @kind)
         AND (@statusesJson IS NULL OR o.status IN (SELECT value FROM json_each(@statusesJson)))
-      ORDER BY bm25(observations_fts), o.updated_at DESC
+      ORDER BY bm25(observations_fts), o.id ASC
       LIMIT @limit
     `).all({
-      query,
+      query: ftsQuery,
       workspaceId: options.workspaceId,
       kind: options.kind ?? null,
       statusesJson: statuses ? stringify(statuses) : null,
@@ -285,7 +287,7 @@ export class VibeMemoryRepository {
       SELECT * FROM observations
       WHERE workspace_id = @workspaceId
         AND status IN ('active', 'working', 'needs_review')
-      ORDER BY trust DESC, confidence DESC, updated_at DESC, created_at DESC, rowid DESC
+      ORDER BY trust DESC, confidence DESC, id ASC
       LIMIT @limit
     `).all({ workspaceId: options.workspaceId, limit: boundedLimit(options.limit) }) as ObservationRow[];
     return rows.map(mapObservation);
@@ -297,10 +299,29 @@ export class VibeMemoryRepository {
       WHERE workspace_id = @workspaceId
         AND status = 'needs_review'
         AND (@kind IS NULL OR kind = @kind)
-      ORDER BY trust DESC, confidence DESC, updated_at DESC, created_at DESC, rowid DESC
+      ORDER BY trust DESC, confidence DESC, id ASC
       LIMIT @limit
     `).all({ workspaceId: options.workspaceId, kind: options.kind ?? null, limit: boundedLimit(options.limit) }) as ObservationRow[];
     return rows.map(mapObservation);
+  }
+
+  updateObservationReview(input: { id: string; status: MemoryStatus; scope?: string; tags?: string[] }): ObservationRecord | undefined {
+    const existing = this.getObservation(input.id);
+    if (!existing) return undefined;
+    const tags = uniqueStrings(input.tags ?? existing.tags);
+    this.db.prepare(`
+      UPDATE observations
+      SET status = @status, scope = @scope, tags_json = @tagsJson, updated_at = @updatedAt
+      WHERE id = @id
+    `).run({ id: input.id, status: input.status, scope: input.scope ?? existing.scope, tagsJson: stringify(tags), updatedAt: isoNow() });
+    const updated = this.getObservation(input.id);
+    if (updated) this.enqueueSyncJob({
+      id: `sync:pi:observation:${updated.id}`,
+      observationId: updated.id,
+      operation: "retain_observation",
+      payload: { bankId: "pi", items: [{ content: `status:${updated.status}\nscope:${updated.scope}\n${updated.content}`, documentId: `pi-observation:${updated.id}`, updateMode: "replace", tags: updated.tags }] },
+    });
+    return updated;
   }
 
   setObservationStatus(id: string, status: MemoryStatus): void {
@@ -328,7 +349,7 @@ export class VibeMemoryRepository {
     const rows = this.db.prepare(`
       SELECT * FROM memory_revisions
       WHERE old_observation_id = @observationId OR new_observation_id = @observationId
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id ASC
       LIMIT 20
     `).all({ observationId }) as MemoryRevisionRow[];
     return rows.map(mapMemoryRevision);
@@ -337,8 +358,15 @@ export class VibeMemoryRepository {
   enqueueSyncJob(input: SyncJobInput): void {
     const now = isoNow();
     this.db.prepare(`
-      INSERT INTO sync_queue (id, observation_id, operation, payload_json, created_at, updated_at)
-      VALUES (@id, @observationId, @operation, @payloadJson, @now, @now)
+      INSERT INTO sync_queue (id, observation_id, operation, payload_json, attempts, last_error, created_at, updated_at)
+      VALUES (@id, @observationId, @operation, @payloadJson, 0, NULL, @now, @now)
+      ON CONFLICT(id) DO UPDATE SET
+        observation_id = excluded.observation_id,
+        operation = excluded.operation,
+        payload_json = excluded.payload_json,
+        attempts = 0,
+        last_error = NULL,
+        updated_at = excluded.updated_at
     `).run({
       id: input.id,
       observationId: input.observationId ?? null,
@@ -351,7 +379,7 @@ export class VibeMemoryRepository {
   listPendingSyncJobs(limit = 25): SyncJobRecord[] {
     const rows = this.db.prepare(`
       SELECT * FROM sync_queue
-      ORDER BY created_at ASC
+      ORDER BY COALESCE(observation_id, id) ASC, id ASC
       LIMIT @limit
     `).all({ limit: boundedLimit(limit, 50) }) as SyncJobRow[];
     return rows.map(mapSyncJob);
@@ -517,6 +545,31 @@ export class VibeMemoryRepository {
     this.db.prepare("UPDATE instinct_candidates SET status = @status, updated_at = @updatedAt WHERE id = @id")
       .run({ id, status, updatedAt: isoNow() });
   }
+
+  setMetadata(key: string, value: unknown): void {
+    this.db.prepare(`
+      INSERT INTO repository_metadata (key, value_json, updated_at)
+      VALUES (@key, @valueJson, @updatedAt)
+      ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
+    `).run({ key, valueJson: stringify(value), updatedAt: isoNow() });
+  }
+
+  getMetadata(key: string): unknown {
+    const row = this.db.prepare("SELECT value_json FROM repository_metadata WHERE key = ?").get(key) as { value_json: string } | undefined;
+    return row ? parseJson(row.value_json) : undefined;
+  }
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 function observationParams(input: ObservationInput, now: string) {
@@ -541,6 +594,17 @@ function observationParams(input: ObservationInput, now: string) {
 function boundedLimit(limit: number | undefined, max = 25): number {
   if (!Number.isInteger(limit) || (limit ?? 0) <= 0) return Math.min(10, max);
   return Math.min(Number(limit), max);
+}
+
+function sanitizeFtsQuery(value: string): string {
+  return value
+    .split(/\s+/)
+    .map((part) => part.replace(/[^A-Za-z0-9_]+/g, " "))
+    .join(" ")
+    .split(/\s+/)
+    .filter((part) => part.length > 1)
+    .slice(0, 12)
+    .join(" ");
 }
 
 function isoNow(): string {

@@ -3,7 +3,7 @@ import { runDoctorChecks } from "./doctor.js";
 import type { VibeMemoryRuntime } from "./tools.js";
 
 type CommandContext = {
-  ui?: { notify?: (message: string, level?: "info" | "warn" | "error") => void };
+  ui?: { notify?: (message: string, level?: "info" | "warning" | "error") => void };
 };
 
 type Registrar = {
@@ -56,13 +56,13 @@ export function registerVibeMemoryCommands(pi: Registrar, getRuntime: RuntimeGet
 
   register(pi, COMMAND_NAMES.disableInjection, "Disable pi-vibe-memory prompt injection for this runtime", async (_args, ctx) => {
     const result = await callRuntime(getRuntime(), "status", { disableInjection: true }, "injection disable not wired yet");
-    notify(ctx, `pi-vibe-memory injection: ${formatBrief(result)}`, "warn");
+    notify(ctx, `pi-vibe-memory injection: ${formatBrief(result)}`, "warning");
   });
 
   register(pi, COMMAND_NAMES.doctor, "Run pi-vibe-memory doctor", async (_args, ctx) => {
     const runtime = getRuntime();
     const result = runtime?.doctor ? await runtime.doctor({}) : runDoctorChecks();
-    notify(ctx, `pi-vibe-memory doctor: ${formatBrief(result)}`);
+    notify(ctx, formatDoctor(result));
   });
 }
 
@@ -75,7 +75,7 @@ async function callRuntime(runtime: VibeMemoryRuntime | undefined, method: keyof
   return typeof fn === "function" ? fn.call(runtime, params) : fallback;
 }
 
-function notify(ctx: CommandContext, message: string, level: "info" | "warn" | "error" = "info"): void {
+function notify(ctx: CommandContext, message: string, level: "info" | "warning" | "error" = "info"): void {
   ctx.ui?.notify?.(message, level);
 }
 
@@ -90,6 +90,19 @@ function formatBrief(value: unknown): string {
     if (typeof record.ok === "boolean") return record.ok ? "ok" : "issues found";
   }
   return String(value);
+}
+
+function formatDoctor(result: unknown): string {
+  const doctor = result as { ok?: boolean; checks?: Array<{ name?: string; status?: string; message?: string; details?: unknown }> } | undefined;
+  if (!doctor || !Array.isArray(doctor.checks)) return `pi-vibe-memory doctor: ${formatBrief(result)}`;
+  const summary = doctor.ok === false ? "issues found" : "ok";
+  const lines = doctor.checks
+    .filter((check) => check.status !== "pass")
+    .map((check) => {
+      const detailText = Array.isArray(check.details) && check.details.length > 0 ? ` Details: ${check.details.join("; ")}` : "";
+      return `${check.name}: ${check.status} - ${check.message}${detailText}`;
+    });
+  return [`pi-vibe-memory doctor: ${summary}`, ...lines].join("\n");
 }
 
 function parseReviewArgs(args: string): Record<string, unknown> {

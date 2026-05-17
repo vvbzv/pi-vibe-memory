@@ -2,8 +2,30 @@
   "name": "pi-vibe-memory",
   "version": "0.1.0",
   "description": "Local-first Hindsight-integrated memory package for Pi Agents",
+  "license": "MIT",
   "type": "module",
-  "keywords": ["pi-package", "pi", "memory", "hindsight"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vvbzv/pi-vibe-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vvbzv/pi-vibe-memory/issues"
+  },
+  "homepage": "https://github.com/vvbzv/pi-vibe-memory#readme",
+  "engines": {
+    "node": ">=20.6.0"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "memory",
+    "hindsight"
+  ],
+  "files": [
+    "README.md",
+    "src/**/*.ts",
+    "package.json"
+  ],
   "scripts": {
     "test": "tsx --test tests/**/*.test.ts",
     "check": "tsc --noEmit"
@@ -18,9 +40,7 @@
     "typescript": "^5.8.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
     "extensions": ["./src/index.ts"]

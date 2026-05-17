@@ -46,6 +46,19 @@ test("runDoctorChecks reports warnings without making the summary fail", () => {
   assert.match(result.checks.find((check) => check.name === "settings")?.message ?? "", /captureRawPrompts/i);
 });
 
+test("runDoctorChecks surfaces config warnings without making the summary fail", () => {
+  const result = runDoctorChecks({
+    settings: DEFAULT_SETTINGS,
+    configWarnings: ["Hindsight MCP source requested but server \"hindsight\" was not found"],
+  });
+
+  assert.equal(result.ok, true);
+  const check = result.checks.find((item) => item.name === "config warnings");
+  assert.equal(check?.status, "warn");
+  assert.match(check?.message ?? "", /Hindsight MCP source requested/);
+  assert.deepEqual(check?.details, ["Hindsight MCP source requested but server \"hindsight\" was not found"]);
+});
+
 test("runDoctorChecks fails on high token budget, conflicts, failed probes, and unsafe names", () => {
   const result = runDoctorChecks({
     settings: {

@@ -79,6 +79,9 @@ test("repository stores and searches observations", async () => {
     assert.equal(matches.length, 1);
     assert.equal(matches[0]?.id, "obs1");
 
+    const hyphenated = repo.searchObservations("installable-npm", { workspaceId: "ws1", limit: 5 });
+    assert.deepEqual(hyphenated.map((item) => item.id), ["obs1"]);
+
     const withInactive = repo.searchObservations("installable npm", { workspaceId: "ws1", limit: 5, includeInactive: true });
     assert.deepEqual(withInactive.map((item) => item.id).sort(), ["obs-old", "obs1"]);
   } finally {
@@ -191,6 +194,43 @@ test("repository filters typed observations and updates review statuses", async 
   }
 });
 
+
+
+test("repository orders sync, search, reviews, and revisions with deterministic id tie-breakers", async () => {
+  const db = openVibeMemoryDb(await tempDbPath());
+  try {
+    const repo = new VibeMemoryRepository(db);
+    repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
+    for (const id of ["b", "a", "c"]) {
+      repo.addObservation({ id, workspaceId: "ws1", kind: "fact", scope: "project", title: "Tie breaker", content: "Deterministic ordering content", status: "needs_review", confidence: 0.8, trust: 0.8 });
+      repo.enqueueSyncJob({ id: `sync:${id}`, observationId: id, operation: "retain_observation", payload: { bankId: "pi", items: [{ content: id }] } });
+    }
+    repo.recordMemoryRevision({ id: "rev-b", oldObservationId: "a", newObservationId: "b", relation: "related", reason: "same timestamp" });
+    repo.recordMemoryRevision({ id: "rev-a", oldObservationId: "a", newObservationId: "c", relation: "related", reason: "same timestamp" });
+    assert.deepEqual(repo.listPendingSyncJobs(10).map((item) => item.id), ["sync:a", "sync:b", "sync:c"]);
+    assert.deepEqual(repo.listReviewObservations({ workspaceId: "ws1", limit: 10 }).map((item) => item.id), ["a", "b", "c"]);
+    assert.deepEqual(repo.searchObservations("Deterministic", { workspaceId: "ws1", includeInactive: true, limit: 10 }).map((item) => item.id).sort(), ["a", "b", "c"]);
+    assert.deepEqual(repo.listMemoryRevisions("a").map((item) => item.id), ["rev-a", "rev-b"]);
+  } finally { db.close(); }
+});
+
+test("repository scoped observation approval persists status, scope, tags and queues changed observation", async () => {
+  const db = openVibeMemoryDb(await tempDbPath());
+  try {
+    const repo = new VibeMemoryRepository(db);
+    repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
+    repo.addObservation({ id: "review1", workspaceId: "ws1", kind: "project_fact", scope: "project", title: "Review", content: "Needs scoped approval.", tags: ["old"], status: "needs_review" });
+    repo.updateObservationReview({ id: "review1", status: "active", scope: "global", tags: ["approved", "approved", "global"] });
+    const observation = repo.getObservation("review1");
+    assert.equal(observation?.status, "active");
+    assert.equal(observation?.scope, "global");
+    assert.deepEqual(observation?.tags, ["approved", "global"]);
+    const job = repo.listPendingSyncJobs(10)[0];
+    assert.equal(job?.id, "sync:pi:observation:review1");
+    assert.match(JSON.stringify(job?.payload), /status:active/);
+    assert.match(JSON.stringify(job?.payload), /scope:global/);
+  } finally { db.close(); }
+});
 
 test("artifact references dedupe path-only rows", async () => {
   const db = openVibeMemoryDb(await tempDbPath());

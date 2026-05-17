@@ -13,6 +13,7 @@ export interface ReviewRepository {
   getObservation?(id: string): ObservationRecord | undefined;
   listMemoryRevisions?(observationId: string): unknown[];
   setObservationStatus?(id: string, status: MemoryStatus): void;
+  updateObservationReview?(input: { id: string; status: MemoryStatus; scope?: string; tags?: string[] }): ObservationRecord | undefined;
   setInstinctCandidateStatus?(id: string, status: MemoryStatus): void;
 }
 
@@ -62,10 +63,20 @@ export function applyReviewAction(repository: ReviewRepository, params: ReviewPa
   const item = items.find((candidate) => candidate.id === id);
   if (!item) throw new Error(`review item not found: ${id}`);
 
+  const scope = stringParam(params.scope);
+  const tags = uniqueStrings(stringArrayParam(params.tags) ?? []);
+
+  if (action === "approve_scoped") {
+    if (item.itemType !== "observation") throw new Error("approve_scoped is supported for observations only");
+    const updated = repository.updateObservationReview?.({ id, status, scope, tags });
+    if (!updated) repository.setObservationStatus?.(id, status);
+    return { action, id, itemType: item.itemType, status, scope, tags };
+  }
+
   if (item.itemType === "observation") repository.setObservationStatus?.(id, status);
   else repository.setInstinctCandidateStatus?.(id, status);
 
-  return { action, id, itemType: item.itemType, status, scope: stringParam(params.scope), tags: stringArrayParam(params.tags) };
+  return { action, id, itemType: item.itemType, status, scope, tags };
 }
 
 function normalizeAction(value: unknown): ReviewAction {
@@ -106,4 +117,15 @@ function stringParam(value: unknown): string | undefined {
 function stringArrayParam(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((item): item is string => typeof item === "string" && item.trim() !== "").map((item) => item.trim());
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
 }

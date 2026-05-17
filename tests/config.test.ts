@@ -48,6 +48,14 @@ test("normalizeSettings rejects invalid numbers and modes", () => {
   assert.throws(() => normalizeSettings({ revision: { maxPromptItems: 0 } }), /revision\.maxPromptItems/);
 });
 
+
+test("normalizeSettings rejects unsafe dbPath values", () => {
+  assert.throws(() => normalizeSettings({ dbPath: "/tmp/pi-vibe-memory.db" }), /dbPath/);
+  assert.throws(() => normalizeSettings({ dbPath: "../pi-vibe-memory.db" }), /dbPath/);
+  assert.throws(() => normalizeSettings({ dbPath: "safe/../pi-vibe-memory.db" }), /dbPath/);
+  assert.equal(normalizeSettings({ dbPath: "safe/pi-vibe-memory.db" }).dbPath, "safe/pi-vibe-memory.db");
+});
+
 test("normalizeSettings enables owner compaction by default", () => {
   const settings = normalizeSettings({});
 
@@ -139,6 +147,48 @@ test("loadVibeMemorySettingsFromFiles can bootstrap Hindsight REST settings from
   await writeFile(settingsPath, JSON.stringify({ vibeMemory: { hindsight: { source: "mcp", bank: "custom-bank" } } }));
   const explicitBank = await loadVibeMemorySettingsFromFiles([settingsPath], { mcpConfigPath: mcpPath });
   assert.equal(explicitBank.hindsight.bank, "custom-bank");
+});
+
+test("loadVibeMemorySettingsFromFiles disables MCP Hindsight when configured server is missing", async () => {
+  const root = await tempDir();
+  const settingsPath = path.join(root, "settings.json");
+  const mcpPath = path.join(root, "custom-mcp.json");
+
+  await writeFile(settingsPath, JSON.stringify({ vibeMemory: { hindsight: { source: "mcp", mcpServer: "missing" } } }));
+  await writeFile(mcpPath, JSON.stringify({ mcpServers: { other: { url: "http://10.0.0.2:8888/mcp/team/sse" } } }));
+
+  const settings = await loadVibeMemorySettingsFromFiles([settingsPath], { mcpConfigPath: mcpPath });
+
+  assert.equal(settings.hindsight.enabled, false);
+  assert.equal(settings.hindsight.baseUrl, DEFAULT_SETTINGS.hindsight.baseUrl);
+  assert.ok(settings.configWarnings.some((warning) => /missing.*not found|disabled/i.test(warning)));
+});
+
+test("loadVibeMemorySettingsFromFiles derives bank from /mcp/<bank>/sse path segment", async () => {
+  const root = await tempDir();
+  const settingsPath = path.join(root, "settings.json");
+  const mcpPath = path.join(root, "custom-mcp.json");
+
+  await writeFile(settingsPath, JSON.stringify({ vibeMemory: { hindsight: { source: "mcp", mcpServer: "hindsight" } } }));
+  await writeFile(mcpPath, JSON.stringify({ mcpServers: { hindsight: { url: "http://192.168.1.112:8888/mcp/team-memory/sse" } } }));
+
+  const settings = await loadVibeMemorySettingsFromFiles([settingsPath], { mcpConfigPath: mcpPath });
+
+  assert.equal(settings.hindsight.baseUrl, "http://192.168.1.112:8888");
+  assert.equal(settings.hindsight.bank, "team-memory");
+});
+
+test("detectConflicts ignores passive or disabled migration-only legacy config", () => {
+  assert.deepEqual(detectConflicts({
+    packages: ["npm:pi-observational-memory"],
+    "observational-memory": { passive: true },
+  }), []);
+
+  assert.deepEqual(detectConflicts({ continuousLearning: { enabled: false } }), []);
+  assert.deepEqual(detectConflicts({
+    packages: ["npm:pi-continuous-learning"],
+    continuousLearning: { enabled: false },
+  }), []);
 });
 
 test("detectConflicts warns about known memory owners", () => {

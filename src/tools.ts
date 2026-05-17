@@ -45,8 +45,11 @@ export function buildToolDefinitions(getRuntime: () => VibeMemoryRuntime | undef
     }),
     tool(TOOL_NAMES.remember, "Remember Vibe Memory", "Store a durable typed memory only with explicit confirmation.", schema({ content: stringSchema("Memory content"), kind: enumSchema("Typed memory kind", ALLOWED_MEMORY_KINDS), scope: enumSchema("Memory scope", MEMORY_SCOPES), tags: stringArraySchema("Memory tags"), explicit: booleanSchema("Required confirmation flag") }, ["content"]), async (params) => {
       if (params.explicit !== true) return confirmationNeeded("remember", "Set explicit: true only after the user clearly confirms this persistent memory write.");
-      const result = await callRuntime(getRuntime(), "remember", params, { status: "stored" });
-      return textResult(`${UNTRUSTED_NOTICE}\nMemory stored: ${formatUnknown(result, "stored")}`, { status: "stored", result });
+      const runtime = getRuntime();
+      const result = await callRuntime(runtime, "remember", params, { status: "not-configured", stored: false });
+      const status = isRecord(result) && typeof result.status === "string" ? result.status : "stored";
+      const stored = status === "stored";
+      return textResult(`${UNTRUSTED_NOTICE}\n${stored ? "Memory stored" : "Memory not configured"}: ${formatUnknown(result, stored ? "stored" : "not-configured")}`, { status, stored, result });
     }),
     tool(TOOL_NAMES.explain, "Explain Vibe Memory", "Show provenance, trust, and revision context for a memory id.", schema({ id: stringSchema("Memory id") }, ["id"]), async (params) => {
       const result = await callRuntime(getRuntime(), "explain", params, { status: "not-available" });
@@ -83,8 +86,11 @@ export function buildToolDefinitions(getRuntime: () => VibeMemoryRuntime | undef
     }),
     tool(TOOL_NAMES.revise, "Revise Vibe Memory", "Supersede/inhibit old memory only with explicit confirmation; never deletes memory.", schema({ oldId: stringSchema("Old memory id"), newContent: stringSchema("New memory content"), reason: stringSchema("Revision reason"), explicit: booleanSchema("Required confirmation flag") }, ["oldId", "newContent", "reason"]), async (params) => {
       if (params.explicit !== true) return confirmationNeeded("revise", "Set explicit: true only after the user confirms this non-destructive memory revision.");
-      const result = await callRuntime(getRuntime(), "revise", params, { status: "revised" });
-      return textResult(`${UNTRUSTED_NOTICE}\nNon-destructive revision recorded: ${formatUnknown(result, "revised")}`, { status: "revised", result });
+      const runtime = getRuntime();
+      const result = await callRuntime(runtime, "revise", params, { status: "not-configured", revised: false });
+      const status = isRecord(result) && typeof result.status === "string" ? result.status : "revised";
+      const revised = status === "revised";
+      return textResult(`${UNTRUSTED_NOTICE}\n${revised ? "Non-destructive revision recorded" : "Revision not configured"}: ${formatUnknown(result, revised ? "revised" : "not-configured")}`, { status, revised, result });
     }),
     tool(TOOL_NAMES.doctor, "Vibe Memory Doctor", "Run pi-vibe-memory health and safety checks.", schema({ migrationStatus: objectSchema("Optional legacy migration status evidence") }), async (params) => {
       const runtime = getRuntime();
@@ -120,6 +126,10 @@ function textResult(text: string, details: unknown = {}): ToolResult {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : { value };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function formatDoctor(result: unknown): string {

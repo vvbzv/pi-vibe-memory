@@ -9,6 +9,7 @@ type SettingsInput = {
   mode?: string;
   promptBudgetChars?: number;
   captureRawPrompts?: boolean;
+  configWarnings?: string[];
   revision?: RevisionInput;
   compaction?: {
     mode?: string;
@@ -60,6 +61,7 @@ export type DoctorInput = {
   commandNames?: readonly string[];
   revision?: RevisionInput;
   migrationStatus?: MigrationStatusInput;
+  configWarnings?: string[];
 };
 
 const TOKEN_LIGHT_PROMPT_BUDGET = 3500;
@@ -180,6 +182,18 @@ function checkSettings(settings: SettingsInput | undefined): DoctorCheck {
   return { name: "settings", status: "pass", message: "Settings are enabled, token-light, and avoid raw prompt capture." };
 }
 
+function checkConfigWarnings(warnings: string[] | undefined): DoctorCheck {
+  if (warnings && warnings.length > 0) {
+    return {
+      name: "config warnings",
+      status: "warn",
+      message: warnings.join("; "),
+      details: warnings,
+    };
+  }
+  return { name: "config warnings", status: "pass", message: "No configuration warnings reported." };
+}
+
 function checkConflicts(conflicts: string[] | undefined): DoctorCheck {
   if (conflicts && conflicts.length > 0) {
     return {
@@ -252,6 +266,7 @@ export function runDoctorChecks(input: DoctorInput = {}): DoctorResult {
   const readiness = checkLegacyReplacementReadiness(input);
   const baseChecks = [
     checkSettings(input.settings),
+    checkConfigWarnings(input.configWarnings ?? input.settings?.configWarnings),
     checkConflicts(input.conflicts),
     checkDatabase(input.database),
     checkHindsight(input.hindsight),

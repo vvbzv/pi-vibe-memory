@@ -172,6 +172,68 @@ test("doctor tool falls back to deterministic doctor checks", async () => {
   assert.ok(Array.isArray(result.details.checks));
 });
 
+test("doctor command includes warning details instead of hiding non-pass checks", async () => {
+  const notifications: Array<{ message: string; level?: string }> = [];
+  const commands = new Map<string, { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }>();
+  const pi = {
+    registerCommand(name: string, definition: { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }) {
+      commands.set(name, definition);
+    },
+  };
+
+  registerVibeMemoryCommands(pi, () => ({
+    doctor: async () => ({
+      ok: true,
+      safeToUninstallLegacy: false,
+      legacyRemovalAdvice: ["Apply migration first."],
+      checks: [
+        { name: "settings", status: "pass", message: "ok" },
+        { name: "hindsight health", status: "warn", message: "Hindsight is offline" },
+        { name: "Legacy replacement readiness", status: "warn", message: "Migration status is not known", details: ["Apply migration first."] },
+      ],
+    }),
+  }));
+
+  await commands.get(COMMAND_NAMES.doctor)!.handler("", { ui: { notify: (message, level) => notifications.push({ message, level }) } });
+
+  assert.match(notifications[0]?.message ?? "", /hindsight health: warn - Hindsight is offline/);
+  assert.match(notifications[0]?.message ?? "", /Legacy replacement readiness: warn - Migration status is not known/);
+  assert.match(notifications[0]?.message ?? "", /Apply migration first/);
+});
+
+
+
+test("remember and revise report not-configured instead of stored when runtime is unavailable", async () => {
+  const tools = buildToolDefinitions(() => undefined);
+  const remember = tools.find((tool) => tool.name === TOOL_NAMES.remember)!;
+  const revise = tools.find((tool) => tool.name === TOOL_NAMES.revise)!;
+
+  const rememberResult = await remember.execute("call1", { content: "Decision: unavailable runtime", explicit: true }, new AbortController().signal);
+  assert.equal(rememberResult.details.status, "not-configured");
+  assert.equal(rememberResult.details.stored, false);
+  assert.doesNotMatch(rememberResult.content[0].text, /Memory stored/i);
+
+  const reviseResult = await revise.execute("call2", { oldId: "old", newContent: "new", reason: "runtime unavailable", explicit: true }, new AbortController().signal);
+  assert.equal(reviseResult.details.status, "not-configured");
+  assert.equal(reviseResult.details.revised, false);
+  assert.doesNotMatch(reviseResult.content[0].text, /revision recorded/i);
+});
+
+test("disable injection command uses Pi warning level", async () => {
+  const notifications: Array<{ message: string; level?: string }> = [];
+  const commands = new Map<string, { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }>();
+  const pi = {
+    registerCommand(name: string, definition: { handler: (args: string, ctx: { ui?: { notify?: (message: string, level?: string) => void } }) => Promise<void> }) {
+      commands.set(name, definition);
+    },
+  };
+
+  registerVibeMemoryCommands(pi, () => ({ status: async () => ({ status: "owner", injectionDisabled: true }) }));
+  await commands.get(COMMAND_NAMES.disableInjection)!.handler("", { ui: { notify: (message, level) => notifications.push({ message, level }) } });
+
+  assert.equal(notifications[0]?.level, "warning");
+});
+
 test("commands use vibe-memory namespace and fake registrar", () => {
   const registered: string[] = [];
   const pi = {

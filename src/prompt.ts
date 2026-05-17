@@ -1,3 +1,5 @@
+import { scrubSecrets } from "./scrub.js";
+
 export interface PromptInstinct {
   id: string;
   content: string;
@@ -217,10 +219,10 @@ function renderRevision(item: PromptMemoryRevision): string {
 function renderItem(attributes: Record<string, string | undefined>, content: string): string {
   const attributeText = Object.entries(attributes)
     .filter((entry): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0)
-    .map(([key, value]) => `${key}="${escapeXml(value)}"`)
+    .map(([key, value]) => `${key}="${escapeXml(scrubSecrets(value, { maxChars: DEFAULT_ITEM_CONTENT_CHARS }))}"`)
     .join(" ");
 
-  return [`<item ${attributeText}>`, `  ${escapeXml(content)}`, "</item>"].join("\n");
+  return [`<item ${attributeText}>`, `  ${escapeXml(scrubSecrets(content, { maxChars: DEFAULT_ITEM_CONTENT_CHARS }))}`, "</item>"].join("\n");
 }
 
 function activeItems<T extends { status?: string }>(items: T[] | undefined): T[] {

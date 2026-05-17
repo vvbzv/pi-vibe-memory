@@ -54,6 +54,17 @@ test("renderMemoryBlock escapes XML special characters in content and attributes
   assert.doesNotMatch(block, /<system>/);
 });
 
+
+test("renderMemoryBlock scrubs secrets at render time", () => {
+  const block = renderMemoryBlock({
+    budgetChars: 1200,
+    local: [{ id: "obs-secret", content: "Never render apiKey=render-secret-token", status: "active" }],
+  });
+
+  assert.match(block, /\[REDACTED_SECRET\]/);
+  assert.doesNotMatch(block, /render-secret-token/);
+});
+
 test("renderMemoryBlock drops lower priority items without cutting XML mid-tag", () => {
   const block = renderMemoryBlock({
     budgetChars: 900,

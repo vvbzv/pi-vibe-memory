@@ -17,7 +17,6 @@ function settings(overrides: Record<string, unknown> = {}) {
   });
 }
 
-
 async function tempContinuousLearningDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "vibe-runtime-import-"));
 }
@@ -57,6 +56,7 @@ class FakeRepository {
   recordMemoryRevision(input: any) { this.revisions.push(input); }
   addInstinctCandidate(input: any) { this.candidates.push(input); }
   setObservationStatus(id: string, status: string) { const item = this.observations.find((obs) => obs.id === id) ?? this.promptObservations.find((obs) => obs.id === id); if (item) item.status = status; }
+  updateObservationReview(input: any) { const item = this.observations.find((obs) => obs.id === input.id) ?? this.promptObservations.find((obs) => obs.id === input.id); if (!item) return; item.status = input.status; if (input.scope) item.scope = input.scope; if (input.tags) item.tags = input.tags; this.enqueueSyncJob({ id: `sync:pi:observation:${input.id}`, observationId: input.id, operation: "retain_observation", payload: { bankId: "pi", items: [{ content: item.content, metadata: { scope: item.scope, status: item.status }, tags: item.tags }] } }); return item; }
   setInstinctCandidateStatus(id: string, status: string) { const item = this.candidates.find((candidate) => candidate.id === id) ?? this.promptInstincts.find((candidate) => candidate.id === id); if (item) item.status = status; }
   listReviewObservations() { return this.observations.filter((item) => item.status === "needs_review").concat(this.promptObservations.filter((item) => item.status === "needs_review")); }
   startMeditationRun(input: any) { this.meditationRuns.push(input); }
@@ -197,6 +197,50 @@ test("beforeAgentStart degrades to local memory when Hindsight recall fails", as
   assert.doesNotMatch(result.systemPrompt, /offline/);
 });
 
+test("beforeAgentStart scrubs and bounds prompt before Hindsight recall", async () => {
+  const calls: any[] = [];
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwcm9tcHQifQ.signaturepart";
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ hindsightRecallLimit: 1, promptBudgetChars: 2000, hindsight: { recallScope: "bankWide" } }),
+    repository: new FakeRepository(),
+    hindsight: {
+      recall: async (_bank: string, query: string) => {
+        calls.push(query);
+        return { memories: [] };
+      },
+    },
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  await runtime.beforeAgentStart({
+    prompt: `Debug auth. Authorization: Bearer super-secret-bearer-token ${jwt} apiKey=server-secret-token ${"x".repeat(2000)}`,
+    systemPrompt: "system",
+  });
+
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0], /super-secret-bearer-token|server-secret-token|eyJhbGciOiJIUzI1NiJ9/);
+  assert.match(calls[0], /\[REDACTED_SECRET\]/);
+  assert.ok(calls[0].length <= 600);
+});
+
+test("beforeAgentStart scrubs Hindsight memory before rendering", async () => {
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ hindsightRecallLimit: 1, promptBudgetChars: 2000, hindsight: { recallScope: "bankWide" } }),
+    repository: new FakeRepository(),
+    hindsight: {
+      recall: async () => ({ memories: [{ id: "hs1", content: "Use apiKey=hindsight-secret-token for tests" }] }),
+    },
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  const result = await runtime.beforeAgentStart({ prompt: "hindsight", systemPrompt: "system" });
+
+  assert.match(result.systemPrompt, /\[REDACTED_SECRET\]/);
+  assert.doesNotMatch(result.systemPrompt, /hindsight-secret-token/);
+});
+
 test("captureTurnEnd stores deterministic raw event, observation, artifact refs, and sync job without LLM calls", async () => {
   const repository = new FakeRepository();
   let reflected = false;
@@ -263,6 +307,21 @@ test("maybeScheduleMeditation is detached and runMeditation stores parsed candid
   assert.ok(manual.candidates >= 1);
 });
 
+test("runtime doctor passes settings config warnings", async () => {
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ configWarnings: ["Hindsight MCP source requested but server \"hindsight\" was not found"] }),
+    repository: new FakeRepository(),
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  const result = await runtime.doctor();
+
+  const check = result.checks.find((item) => item.name === "config warnings");
+  assert.equal(check?.status, "warn");
+  assert.match(check?.message ?? "", /Hindsight MCP source requested/);
+});
+
 test("runtime tool methods are thin, explicit, and non-destructive", async () => {
   const repository = new FakeRepository();
   repository.promptObservations = [{ id: "old", content: "Old memory", status: "active" }];
@@ -290,8 +349,6 @@ test("runtime tool methods are thin, explicit, and non-destructive", async () =>
   assert.equal(repository.revisions[0].relation, "supersedes");
 });
 
-
-
 test("continuous-learning import previews directory records and apply requires explicit confirmation", async () => {
   const root = await tempContinuousLearningDir();
   await writeJsonFile(path.join(root, "facts.json"), [
@@ -303,7 +360,12 @@ test("continuous-learning import previews directory records and apply requires e
   const repository = new FakeRepository();
   const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
 
-  const preview = await runtime.import({ source: "continuous-learning", path: root }) as any;
+  await assert.rejects(
+    () => runtime.import({ source: "continuous-learning", path: root }),
+    /explicit/i,
+  );
+
+  const preview = await runtime.import({ source: "continuous-learning", path: root, explicit: true }) as any;
 
   assert.equal(preview.status, "preview");
   assert.equal(preview.dryRun, true);
@@ -313,8 +375,10 @@ test("continuous-learning import previews directory records and apply requires e
   assert.equal(repository.candidates.length, 0);
   assert.equal(preview.items.find((item: any) => item.legacyId === "fact-1").kind, "environment_fact");
 
-  const blocked = await runtime.import({ source: "continuous-learning", path: root, dryRun: false }) as any;
-  assert.equal(blocked.status, "confirmation-needed");
+  await assert.rejects(
+    () => runtime.import({ source: "continuous-learning", path: root, dryRun: false }),
+    /explicit/i,
+  );
   assert.equal(repository.observations.length, 0);
   assert.equal(repository.candidates.length, 0);
 
@@ -402,6 +466,41 @@ test("review lists candidates and applies non-destructive actions", async () => 
 });
 
 
+
+test("review approve_scoped persists observation scope and tags then enqueues replacement sync", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [{ id: "obs-review", kind: "project_fact", scope: "project", tags: ["old"], content: "Needs review", status: "needs_review" }];
+  const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
+  const approved = await runtime.review({ action: "approve_scoped", id: "obs-review", scope: "global", tags: ["approved", "approved", "durable"] }) as any;
+  assert.equal(approved.status, "active");
+  assert.equal(repository.promptObservations[0].scope, "global");
+  assert.deepEqual(repository.promptObservations[0].tags, ["approved", "durable"]);
+  assert.equal(repository.syncJobs[0]?.id, "sync:pi:observation:obs-review");
+});
+
+test("review approve_scoped rejects instinct scope changes without mutating", async () => {
+  const repository = new FakeRepository();
+  repository.promptInstincts = [{ id: "inst-review", kind: "behavior_instinct", content: "Write tests first", status: "needs_review" }];
+  const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
+  await assert.rejects(
+    () => runtime.review({ action: "approve_scoped", id: "inst-review", scope: "global", tags: ["approved"] }),
+    /approve_scoped.*observations/i,
+  );
+  assert.equal(repository.promptInstincts[0].status, "needs_review");
+});
+
+test("revise enqueues the old superseded observation before the new revision observation", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [{ id: "old", workspaceId: "ws1", kind: "fact", scope: "project", title: "Old", content: "Old memory", sourceEventIds: [], tags: [], confidence: 0.5, trust: 0.7, status: "active", createdAt: "now", updatedAt: "now" }];
+  const runtime = new VibeMemoryRuntime({ settings: settings(), repository, workspaceId: "ws1", sessionId: "s1" });
+  const revised = await runtime.revise({ oldId: "old", newContent: "New memory", reason: "new evidence", explicit: true });
+  assert.equal(revised.status, "revised");
+  assert.equal(repository.syncJobs.length, 2);
+  assert.equal(repository.syncJobs[0].observationId, "old");
+  assert.equal(repository.syncJobs[1].observationId, revised.id);
+  assert.match(JSON.stringify(repository.syncJobs[0].payload), /superseded/);
+});
+
 test("beforeCompact returns owner compaction without calling Hindsight", async () => {
   const repository = new FakeRepository();
   repository.promptObservations = [
@@ -445,17 +544,19 @@ test("beforeCompact returns owner compaction without calling Hindsight", async (
   assert.match(result?.compaction.summary ?? "", /Write tests first/);
 });
 
-test("beforeCompact skips disabled, observe mode, and competing compaction owner", async () => {
+test("beforeCompact skips disabled, passive top-level mode, non-owner compaction, conflicts, and competing compaction owner", async () => {
   const repository = new FakeRepository();
   repository.promptObservations = [{ id: "fact1", kind: "project_fact", content: "One memory extension", status: "active" }];
 
-  for (const overrides of [
-    { enabled: false },
-    { compaction: { enabled: false } },
-    { compaction: { mode: "off" } },
-    { compaction: { mode: "observe" } },
+  for (const options of [
+    { settings: settings({ enabled: false }) },
+    { settings: settings({ mode: "passive", compaction: { mode: "owner" } }) },
+    { settings: settings({ compaction: { enabled: false } }) },
+    { settings: settings({ compaction: { mode: "off" } }) },
+    { settings: settings({ compaction: { mode: "observe" } }) },
+    { settings: settings({ mode: "owner", compaction: { mode: "owner" } }), conflicts: ["other owner"] },
   ]) {
-    const runtime = new VibeMemoryRuntime({ settings: settings(overrides), repository, workspaceId: "ws1", sessionId: "s1" });
+    const runtime = new VibeMemoryRuntime({ ...options, repository, workspaceId: "ws1", sessionId: "s1" });
     assert.equal(await runtime.beforeCompact({ preparation: { firstKeptEntryId: "entry", tokensBefore: 1 }, branchEntries: [] } as any), undefined);
   }
 
@@ -465,4 +566,17 @@ test("beforeCompact skips disabled, observe mode, and competing compaction owner
     branchEntries: [{ type: "compaction", details: { type: "observational-memory" } }],
   } as any);
   assert.equal(result, undefined);
+});
+
+test("beforeCompact requires top-level owner mode even when compaction is owner", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [{ id: "fact1", kind: "project_fact", content: "One memory extension", status: "active" }];
+  const runtime = new VibeMemoryRuntime({
+    settings: settings({ mode: "toolsOnly", compaction: { enabled: true, mode: "owner" } }),
+    repository,
+    workspaceId: "ws1",
+    sessionId: "s1",
+  });
+
+  assert.equal(await runtime.beforeCompact({ preparation: { firstKeptEntryId: "entry", tokensBefore: 1 }, branchEntries: [] } as any), undefined);
 });

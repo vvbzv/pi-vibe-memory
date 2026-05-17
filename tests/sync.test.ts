@@ -145,7 +145,7 @@ test("enqueueObservationSync stores a retain payload for the observation bank", 
   }
 });
 
-test("flushSyncQueue batches jobs by bank and marks them done after retain", async () => {
+test("flushSyncQueue flushes one job at a time to avoid partial retain ambiguity", async () => {
   const marked: string[] = [];
   const calls: Array<{ bankId: string; items: unknown[] }> = [];
   const repository = {
@@ -165,10 +165,110 @@ test("flushSyncQueue batches jobs by bank and marks them done after retain", asy
 
   const result = await flushSyncQueue({ repository, hindsight, maxBatchItems: 10 });
 
-  assert.deepEqual(calls, [{ bankId: "pi", items: [{ content: "hello" }, { content: "world" }] }]);
+  assert.deepEqual(calls, [
+    { bankId: "pi", items: [{ content: "hello" }] },
+    { bankId: "pi", items: [{ content: "world" }] },
+  ]);
   assert.deepEqual(marked, ["job1", "job2"]);
   assert.equal(result.succeeded, 2);
   assert.equal(result.failed, 0);
+});
+
+
+test("enqueueObservationSync is idempotent for deterministic observation jobs", async () => {
+  const db = openVibeMemoryDb(await tempDbPath());
+  try {
+    const repository = new VibeMemoryRepository(db);
+    repository.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
+    repository.addObservation({ id: "obs1", workspaceId: "ws1", kind: "decision", scope: "project", title: "Original", content: "Original content.", status: "active" });
+    const original = repository.getObservation("obs1");
+    assert.ok(original);
+
+    enqueueObservationSync(repository, original, "pi");
+    repository.markSyncJobFailed("sync:pi:observation:obs1", "Hindsight offline");
+    const failed = repository.listPendingSyncJobs(5)[0];
+    assert.equal(failed?.attempts, 1);
+
+    repository.addObservation({ id: "obs1", workspaceId: "ws1", kind: "decision", scope: "project", title: "Updated", content: "Updated content.", status: "active" });
+    const updated = repository.getObservation("obs1");
+    assert.ok(updated);
+    assert.doesNotThrow(() => enqueueObservationSync(repository, updated, "pi"));
+
+    const jobs = repository.listPendingSyncJobs(5);
+    assert.equal(jobs.length, 1);
+    assert.equal(jobs[0]?.createdAt, failed?.createdAt);
+    assert.equal(jobs[0]?.attempts, 0);
+    assert.equal(jobs[0]?.lastError, undefined);
+    assert.match(JSON.stringify(jobs[0]?.payload), /Updated content/);
+  } finally {
+    db.close();
+  }
+});
+
+test("flushSyncQueue marks malformed jobs failed and still flushes valid jobs", async () => {
+  const marked: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  const calls: Array<{ bankId: string; items: unknown[] }> = [];
+  const repository = {
+    listPendingSyncJobs: () => [
+      { id: "blank-bank", operation: "retain_observation", payload: { bankId: "  ", items: [{ content: "ignored" }] }, attempts: 0, createdAt: "1", updatedAt: "1" },
+      { id: "missing-content", operation: "retain_observation", payload: { bankId: "pi", items: [{ documentId: "doc" }] }, attempts: 0, createdAt: "2", updatedAt: "2" },
+      { id: "valid", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "kept" }] }, attempts: 0, createdAt: "3", updatedAt: "3" },
+    ],
+    markSyncJobDone: (id: string) => marked.push(id),
+    markSyncJobFailed: (id: string, error: string) => failed.push({ id, error }),
+  };
+  const hindsight = { retainBatch: async (bankId: string, items: unknown[]) => { calls.push({ bankId, items }); return { ok: true }; } };
+
+  const result = await flushSyncQueue({ repository, hindsight, maxBatchItems: 10 });
+
+  assert.deepEqual(calls, [{ bankId: "pi", items: [{ content: "kept" }] }]);
+  assert.deepEqual(marked, ["valid"]);
+  assert.deepEqual(failed.map((item) => item.id).sort(), ["blank-bank", "missing-content"]);
+  assert.equal(result.succeeded, 1);
+  assert.equal(result.failed, 2);
+});
+
+test("flushSyncQueue keeps failed jobs queued while later valid jobs can succeed", async () => {
+  const marked: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  const repository = {
+    listPendingSyncJobs: () => [
+      { id: "fail", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "first" }] }, attempts: 0, createdAt: "1", updatedAt: "1" },
+      { id: "pass", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "second" }] }, attempts: 0, createdAt: "2", updatedAt: "2" },
+    ],
+    markSyncJobDone: (id: string) => marked.push(id),
+    markSyncJobFailed: (id: string, error: string) => failed.push({ id, error }),
+  };
+  const hindsight = { retainBatch: async (_bankId: string, items: unknown[]) => { if (JSON.stringify(items).includes("first")) throw new Error("first failed"); return { ok: true }; } };
+
+  const result = await flushSyncQueue({ repository, hindsight, maxBatchItems: 10 });
+
+  assert.deepEqual(marked, ["pass"]);
+  assert.deepEqual(failed, [{ id: "fail", error: "first failed" }]);
+  assert.equal(result.succeeded, 1);
+  assert.equal(result.failed, 1);
+});
+
+test("flushSyncQueue scrubs retained failure messages", async () => {
+  const failed: Array<{ id: string; error: string }> = [];
+  const repository = {
+    listPendingSyncJobs: () => [
+      { id: "job1", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "hello" }] }, attempts: 0, createdAt: "now", updatedAt: "now" },
+    ],
+    markSyncJobDone: () => undefined,
+    markSyncJobFailed: (id: string, error: string) => failed.push({ id, error }),
+  };
+  const hindsight = {
+    retainBatch: async () => { throw new Error("retain failed apiKey=sync-secret-token"); },
+  };
+
+  const result = await flushSyncQueue({ repository, hindsight, maxBatchItems: 10 });
+
+  assert.equal(result.failed, 1);
+  assert.equal(failed[0]?.id, "job1");
+  assert.match(failed[0]?.error ?? "", /\[REDACTED_SECRET\]/);
+  assert.doesNotMatch(failed[0]?.error ?? "", /sync-secret-token/);
 });
 
 test("flushSyncQueue records failed attempts without throwing by default", async () => {

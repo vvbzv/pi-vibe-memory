@@ -48,7 +48,7 @@ test("session_start loads config, opens runtime, warns on conflicts, and doctor 
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
     packages: ["npm:pi-observational-memory"],
     "observational-memory": { passive: false },
-    vibeMemory: { dbPath: path.join(root, "memory.db"), hindsight: { enabled: false }, meditation: { mode: "off" } },
+    vibeMemory: { dbPath: "memory.db", hindsight: { enabled: false }, meditation: { mode: "off" } },
   }));
   const pi = new FakePi();
   piVibeMemory(pi as any);
@@ -56,7 +56,7 @@ test("session_start loads config, opens runtime, warns on conflicts, and doctor 
 
   await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
 
-  assert.ok(ctx.notifications.some((item) => /competing memory owner|pi-observational-memory/i.test(item.message)));
+  assert.ok(ctx.notifications.some((item) => /competing memory owner|pi-observational-memory/i.test(item.message) && item.level === "warning"));
   const before = await pi.handlers.get("before_agent_start")?.({ prompt: "hello", systemPrompt: "system" }, ctx);
   assert.deepEqual(before, undefined);
 
@@ -64,17 +64,35 @@ test("session_start loads config, opens runtime, warns on conflicts, and doctor 
   assert.ok(ctx.notifications.some((item) => /doctor|issues found|ok/i.test(item.message)));
 });
 
-test("before_agent_start hook returns appended system prompt after local capture", async () => {
+test("session_start surfaces settings config warnings", async () => {
   const root = await tempProject();
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
-    vibeMemory: { dbPath: path.join(root, "memory.db"), hindsight: { enabled: false }, meditation: { mode: "off" }, captureRawPrompts: true },
+    vibeMemory: {
+      dbPath: "memory.db",
+      hindsight: { enabled: true, source: "mcp", mcpServer: "missing-hindsight" },
+      meditation: { mode: "off" },
+    },
   }));
   const pi = new FakePi();
   piVibeMemory(pi as any);
   const ctx = fakeContext(root);
 
   await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
-  await pi.handlers.get("turn_end")?.({ turnIndex: 1, message: { content: "Assistant edited src/index.ts" }, toolResults: [] }, ctx);
+
+  assert.ok(ctx.notifications.some((item) => /Hindsight MCP source requested.*missing-hindsight/i.test(item.message) && item.level === "warning"));
+});
+
+test("before_agent_start hook returns appended system prompt after local capture", async () => {
+  const root = await tempProject();
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
+    vibeMemory: { dbPath: "memory.db", hindsight: { enabled: false }, meditation: { mode: "off" }, captureRawPrompts: true },
+  }));
+  const pi = new FakePi();
+  piVibeMemory(pi as any);
+  const ctx = fakeContext(root);
+
+  await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+  await pi.handlers.get("turn_end")?.({ turnIndex: 1, prompt: "Please inspect src/index.ts", message: { content: "Assistant edited src/index.ts for memory lifecycle" }, toolResults: [] }, ctx);
   const result = await pi.handlers.get("before_agent_start")?.({ prompt: "src/index.ts", systemPrompt: "system" }, ctx);
 
   assert.match(result.systemPrompt, /<pi_vibe_memory trust="untrusted">/);
@@ -84,14 +102,17 @@ test("before_agent_start hook returns appended system prompt after local capture
 test("session_before_compact hook returns owner compaction from local memory", async () => {
   const root = await tempProject();
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
-    vibeMemory: { dbPath: path.join(root, "memory.db"), hindsight: { enabled: false }, meditation: { mode: "off" }, captureRawPrompts: true },
+    packages: [],
+    "observational-memory": { passive: true },
+    continuousLearning: { enabled: false },
+    vibeMemory: { dbPath: "memory.db", hindsight: { enabled: false }, meditation: { mode: "off" }, captureRawPrompts: true },
   }));
   const pi = new FakePi();
   piVibeMemory(pi as any);
   const ctx = fakeContext(root);
 
   await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
-  await pi.handlers.get("turn_end")?.({ turnIndex: 1, message: { content: "Assistant edited src/index.ts" }, toolResults: [] }, ctx);
+  await pi.handlers.get("turn_end")?.({ turnIndex: 1, prompt: "Please inspect src/index.ts", message: { content: "Assistant edited src/index.ts for memory lifecycle" }, toolResults: [] }, ctx);
   const result = await pi.handlers.get("session_before_compact")?.({
     preparation: { firstKeptEntryId: "entry-1", tokensBefore: 200, fileOps: { readFiles: ["src/index.ts"], modifiedFiles: [] } },
     branchEntries: [],
@@ -101,4 +122,55 @@ test("session_before_compact hook returns owner compaction from local memory", a
   assert.equal(result.compaction.tokensBefore, 200);
   assert.equal(result.compaction.details.type, "pi-vibe-memory");
   assert.match(result.compaction.summary, /Pi Vibe Memory Continuity/);
+});
+
+
+
+test("strictSingleOwner downgrades runtime to toolsOnly, disables compaction, and warns", async () => {
+  const root = await tempProject();
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
+    packages: ["npm:pi-observational-memory"],
+    "observational-memory": { passive: false },
+    vibeMemory: {
+      dbPath: "memory.db",
+      strictSingleOwner: true,
+      hindsight: { enabled: false },
+      meditation: { mode: "off" },
+      captureRawPrompts: true,
+      compaction: { mode: "owner" },
+    },
+  }));
+  const pi = new FakePi();
+  piVibeMemory(pi as any);
+  const ctx = fakeContext(root);
+
+  await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+
+  assert.ok(ctx.notifications.some((item) => /strictSingleOwner.*toolsOnly/i.test(item.message) && item.level === "warning"));
+  await pi.handlers.get("turn_end")?.({ turnIndex: 1, prompt: "Please inspect src/index.ts", message: { content: "Assistant edited src/index.ts for memory lifecycle" } }, ctx);
+  assert.equal(await pi.handlers.get("before_agent_start")?.({ prompt: "src/index.ts", systemPrompt: "system" }, ctx), undefined);
+  assert.equal(await pi.handlers.get("session_before_compact")?.({ preparation: { firstKeptEntryId: "entry", tokensBefore: 1 }, branchEntries: [] }, ctx), undefined);
+});
+
+
+test("session_shutdown closes database even when sync fails", async () => {
+  const root = await tempProject();
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
+    packages: [],
+    "observational-memory": { passive: true },
+    continuousLearning: { enabled: false },
+    vibeMemory: { dbPath: "memory.db", hindsight: { baseUrl: "http://127.0.0.1:1", timeoutMs: 1 }, meditation: { mode: "off" }, sync: { maxBatchItems: 1 } },
+  }));
+  const pi = new FakePi();
+  piVibeMemory(pi as any);
+  const ctx = fakeContext(root);
+
+  await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+  const remember = pi.tools.find((tool) => tool.name === TOOL_NAMES.remember)!;
+  await remember.execute("call1", { content: "Shutdown should close after sync failure", explicit: true }, new AbortController().signal);
+
+  await assert.doesNotReject(() => pi.handlers.get("session_shutdown")?.({}, ctx));
+
+  await pi.handlers.get("session_start")?.({ reason: "restart" }, ctx);
+  assert.ok(!ctx.notifications.some((item) => /config\/runtime error/i.test(item.message)));
 });

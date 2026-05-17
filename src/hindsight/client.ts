@@ -64,8 +64,18 @@ export class HindsightError extends Error {
     this.name = "HindsightError";
     this.status = options.status;
     this.body = options.body;
-    this.cause = options.cause;
+    if (options.cause !== undefined) this.cause = sanitizeCause(options.cause);
   }
+}
+
+function sanitizeCause(cause: unknown): unknown {
+  if (cause instanceof Error) {
+    const sanitized = new Error(scrubSecrets(cause.message, { maxChars: 500 }));
+    sanitized.name = cause.name;
+    return sanitized;
+  }
+  if (cause === undefined) return undefined;
+  return new Error(scrubSecrets(String(cause), { maxChars: 500 }));
 }
 
 export class HindsightClient {
@@ -153,7 +163,7 @@ export class HindsightClient {
       if (isAbortError(error)) {
         throw new HindsightError(`Hindsight request timed out after ${this.timeoutMs}ms`, { status: 0, cause: error });
       }
-      throw new HindsightError(`Hindsight request failed: ${errorMessage(error)}`, { status: 0, cause: error });
+      throw new HindsightError(`Hindsight request failed: ${scrubSecrets(errorMessage(error), { maxChars: 500 })}`, { status: 0, cause: error });
     } finally {
       clearTimeout(timeout);
     }
@@ -206,7 +216,7 @@ function reflectOptionsToPayload(options: ReflectOptions): JsonObject {
 
 async function throwHttpError(response: Response): Promise<never> {
   const body = scrubSecrets(await response.text());
-  throw new HindsightError(`Hindsight request failed with ${response.status} ${response.statusText}: ${body}`, {
+  throw new HindsightError(`Hindsight request failed with ${response.status} ${scrubSecrets(response.statusText, { maxChars: 120 })}: ${body}`, {
     status: response.status,
     body,
   });
@@ -218,8 +228,9 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!text) return undefined as T;
   try {
     return JSON.parse(text) as T;
-  } catch (error) {
-    throw new HindsightError(`Hindsight returned invalid JSON: ${errorMessage(error)}`, { status: response.status, body: scrubSecrets(text), cause: error });
+  } catch {
+    const body = scrubSecrets(text, { maxChars: 500 });
+    throw new HindsightError(`Hindsight returned invalid JSON: ${body}`, { status: response.status, body, cause: new Error(`Invalid JSON response body: ${body}`) });
   }
 }
 

@@ -9,9 +9,10 @@ import { DEFAULT_DB_RELATIVE_PATH, PACKAGE_NAME } from "./constants.js";
 import { openVibeMemoryDb, type VibeMemoryDb } from "./storage/db.js";
 import { VibeMemoryRepository } from "./storage/repository.js";
 import { HindsightClient } from "./hindsight/client.js";
+import { scrubSecrets } from "./scrub.js";
 import { VibeMemoryRuntime } from "./runtime.js";
 
-type UiContext = { cwd?: string; ui?: { notify?: (message: string, level?: "info" | "warn" | "error") => void } };
+type UiContext = { cwd?: string; ui?: { notify?: (message: string, level?: "info" | "warning" | "error") => void } };
 type HookContext = UiContext;
 
 type RuntimeState = {
@@ -36,7 +37,10 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
       const rawSettings = await readMergedSettings(settingsPaths);
       const settings = await loadVibeMemorySettingsFromFiles(settingsPaths);
       const conflicts = detectConflicts(rawSettings);
-      const dbPath = resolveDbPath(settings, cwd);
+      const effectiveSettings = settings.strictSingleOwner && conflicts.length > 0
+        ? { ...settings, mode: "toolsOnly" as const, compaction: { ...settings.compaction, enabled: false, mode: "off" as const } }
+        : settings;
+      const dbPath = resolveDbPath(effectiveSettings, cwd);
       const db = openVibeMemoryDb(dbPath);
       const repository = new VibeMemoryRepository(db);
       const workspaceId = workspaceIdFor(cwd);
@@ -45,22 +49,24 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
       repository.upsertWorkspace({ id: workspaceId, name: path.basename(cwd) || "workspace", rootPath: cwd });
       repository.startSession({ id: sessionId, workspaceId });
 
-      const hindsight = settings.hindsight.enabled
+      const hindsight = effectiveSettings.hindsight.enabled
         ? new HindsightClient({
-            baseUrl: settings.hindsight.baseUrl,
-            apiKey: settings.hindsight.apiKey,
-            apiKeyEnv: settings.hindsight.apiKeyEnv,
-            timeoutMs: settings.hindsight.timeoutMs,
+            baseUrl: effectiveSettings.hindsight.baseUrl,
+            apiKey: effectiveSettings.hindsight.apiKey,
+            apiKeyEnv: effectiveSettings.hindsight.apiKeyEnv,
+            timeoutMs: effectiveSettings.hindsight.timeoutMs,
           })
         : undefined;
 
       state.db?.close();
       state.db = db;
-      state.settings = settings;
+      state.settings = effectiveSettings;
       state.conflicts = conflicts;
-      state.runtime = new VibeMemoryRuntime({ settings, repository, hindsight: hindsight as any, workspaceId, sessionId, workspaceRoot: cwd, conflicts });
+      state.runtime = new VibeMemoryRuntime({ settings: effectiveSettings, repository, hindsight: hindsight as any, workspaceId, sessionId, workspaceRoot: cwd, conflicts });
 
-      for (const conflict of conflicts) notify(ctx, `${PACKAGE_NAME}: competing memory owner detected: ${conflict}`, "warn");
+      for (const warning of effectiveSettings.configWarnings) notify(ctx, `${PACKAGE_NAME}: ${warning}`, "warning");
+      for (const conflict of conflicts) notify(ctx, `${PACKAGE_NAME}: competing memory owner detected: ${conflict}`, "warning");
+      if (settings.strictSingleOwner && conflicts.length > 0) notify(ctx, `${PACKAGE_NAME}: strictSingleOwner conflict detected; runtime forced to toolsOnly and compaction disabled.`, "warning");
     } catch (error) {
       notify(ctx, `${PACKAGE_NAME}: config/runtime error: ${errorMessage(error)}`, "error");
     }
@@ -81,7 +87,7 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
       return await state.runtime.beforeCompact(event);
     } catch (error) {
       if (state.settings?.compaction.failOpen !== false) {
-        notify(ctx, `${PACKAGE_NAME}: compaction skipped: ${errorMessage(error)}`, "warn");
+        notify(ctx, `${PACKAGE_NAME}: compaction skipped: ${errorMessage(error)}`, "warning");
         return undefined;
       }
       throw error;
@@ -100,14 +106,14 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
         assistantText: stringOrUndefined(event?.assistantText ?? event?.message?.content ?? event?.content),
       });
     } catch (error) {
-      notify(ctx, `${PACKAGE_NAME}: turn capture failed: ${errorMessage(error)}`, "warn");
+      notify(ctx, `${PACKAGE_NAME}: turn capture failed: ${errorMessage(error)}`, "warning");
     }
   });
 
   (pi as any).on("tool_execution_end", async (event: any, ctx: HookContext) => {
     if (!state.runtime || !state.settings || state.settings.codeReferences.captureFromToolResults === false) return;
     if (!shouldCaptureToolEvent(event, state.settings.captureToolOutput)) return;
-    const text = stringifyToolResult(event);
+    const text = summarizeToolEvent(event);
     if (!text) return;
     try {
       await state.runtime.captureTurnEnd({
@@ -116,13 +122,15 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
         assistantText: text,
       });
     } catch (error) {
-      notify(ctx, `${PACKAGE_NAME}: tool capture failed: ${errorMessage(error)}`, "warn");
+      notify(ctx, `${PACKAGE_NAME}: tool capture failed: ${errorMessage(error)}`, "warning");
     }
   });
 
   (pi as any).on("session_shutdown", async () => {
     try {
       await state.runtime?.sync();
+    } catch {
+      // Sync failures should not prevent local database shutdown.
     } finally {
       state.db?.close();
       state.db = undefined;
@@ -166,7 +174,7 @@ function sessionIdFor(cwd: string): string {
   return `session_${hash(`${path.resolve(cwd)}:${process.pid}`)}`;
 }
 
-function notify(ctx: UiContext, message: string, level: "info" | "warn" | "error" = "info"): void {
+function notify(ctx: UiContext, message: string, level: "info" | "warning" | "error" = "info"): void {
   ctx.ui?.notify?.(message, level);
 }
 
@@ -181,15 +189,40 @@ function shouldCaptureToolEvent(event: any, mode: NormalizedVibeMemorySettings["
   return mode === "summaries";
 }
 
-function stringifyToolResult(event: any): string | undefined {
-  const value = event?.error ?? event?.summary ?? event?.result?.summary ?? event?.output?.summary ?? event?.content;
-  if (typeof value === "string") return value;
-  if (value == null) return undefined;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
+function summarizeToolEvent(event: any): string | undefined {
+  const toolName = firstString(event?.toolName, event?.tool_name, event?.name, event?.tool?.name) ?? "unknown";
+  const toolId = firstString(event?.toolCallId, event?.tool_call_id, event?.callId, event?.id) ?? "unknown";
+  const status = firstString(event?.status) ?? (event?.error || event?.isError || event?.failed ? "error" : "ok");
+  const lines = [`tool=${toolName}`, `id=${toolId}`, `status=${status}`];
+
+  const explicitSummary = firstString(event?.summary, event?.result?.summary, event?.output?.summary);
+  if (explicitSummary) lines.push(`summary=${firstLine(explicitSummary)}`);
+
+  const error = event?.error;
+  if (error != null) {
+    const errorName = errorClassName(error);
+    const message = firstString(error?.message, typeof error === "string" ? error : undefined);
+    lines.push(`error=${errorName}${message ? `: ${firstLine(message)}` : ""}`);
   }
+
+  return scrubSecrets(lines.join("\n"), { maxChars: 600 });
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/, 1)[0]?.trim() ?? "";
+}
+
+function errorClassName(error: unknown): string {
+  if (error instanceof Error) return error.name || error.constructor.name || "Error";
+  if (isPlainObject(error) && typeof error.name === "string" && error.name.trim()) return error.name.trim();
+  return typeof error === "string" ? "Error" : "Object";
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
