@@ -28,7 +28,7 @@ What it does **not** do:
 
 - It does **not** run a background periodic auto-retry sync worker.
 - It does **not** delete old knowledge as part of learning.
-- It does **not** crawl/index your whole repo like LaPis.
+- It does **not** crawl/index your whole repo.
 - It does **not** write to `AGENTS.md`, skills, commands, or project files automatically.
 - It does **not** register generic tools like `recall`, `memory-search`, `fact_*`, or `instinct_*`.
 
