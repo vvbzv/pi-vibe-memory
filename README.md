@@ -4,7 +4,7 @@
 
 # pi-vibe-memory
 
-> Latest update: owner-mode compaction now fails open when local memory only contains noisy tool-error telemetry, so Pi can use its default compaction to recover from repeated context-window failures.
+> Stability update: owner-mode compaction now fails open when local memory only contains noisy tool-error telemetry. This is a long-term guardrail for memory-owned compaction loops, but already-stuck sessions may still need a fresh Pi session after updating.
 
 ## 60 Second Easy and Short
 
