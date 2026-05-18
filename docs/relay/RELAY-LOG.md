@@ -1,4 +1,14 @@
 ---
+## 2026-05-18 — Session 2 — pi coding agent — 🟢 Clean
+
+- **Accomplished:** Diagnosed the repeated over-window compaction loop risk, hardened owner compaction to fail open on malformed/noisy context, fixed observation lifecycle sync payloads, updated README and relay docs.
+- **Verified:** `npm run check` clean; `npm test` 137/137 passing after the compaction/lifecycle fix commit. Documentation-only update pending final verification in the current pass.
+- **Root cause note:** A custom memory-only compaction summary containing only low-value rows like `Assistant summary: tool=ctx_find ... status=error` can prevent Pi's default compaction from recovering enough real conversation context, causing repeated `input exceeds context window` failures.
+- **Safety behavior now documented:** Custom compaction requires `firstKeptEntryId`, filters tool-error telemetry, and returns `undefined` when no useful continuity remains so Pi falls back to default compaction.
+- **Mode:** routed
+- **Next model hint:** release hygiene / docs review
+
+---
 ## 2026-05-18 — Session 1 — pi coding agent — 🟢 Clean
 
 - **Accomplished:** Built, audited, dogfooded, pushed, and documented `pi-vibe-memory` v1 replacement branch; added readable stats tool/command and relay handoff docs.

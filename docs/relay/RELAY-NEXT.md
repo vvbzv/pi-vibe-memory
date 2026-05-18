@@ -1,5 +1,14 @@
 # RELAY-NEXT — Session 2 targets
 
+## Priority 0 — Post-fix validation
+
+### [P0] Dogfood compaction-loop fix [execution-heavy]
+
+- **Why it matters:** The code now falls back to Pi default compaction when local memory only contains noisy tool-error telemetry, but the live Pi runtime should be exercised after reinstall/update.
+- **Success criteria:** In an isolated long/over-window-ish session or controlled hook test, verify `session_before_compact` returns no custom compaction for only `Assistant summary: tool=... status=error` observations and Pi continues with default compaction instead of looping.
+- **Depends on:** Current branch installed in the Pi runtime being tested.
+- **Hint:** Existing regression coverage is `beforeCompact falls back to Pi default compaction for noisy over-window telemetry` in `tests/runtime.test.ts`.
+
 ## Priority 1 — Release hygiene
 
 ### [P1] Decide package version and release target [reasoning-heavy]

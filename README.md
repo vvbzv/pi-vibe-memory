@@ -22,6 +22,7 @@ What it does:
 - Marks injected memory as **untrusted reference material**, not instructions.
 - Stores memory locally under `~/.pi/agent/vibe-memory/memory.db` by default.
 - Syncs queued observations to Hindsight when `/vibe-memory-sync`, `vibe_memory_sync`, or session shutdown runs.
+- Owns compaction only when useful local continuity exists; otherwise it lets Pi's default compaction recover the session.
 - Supports review, revision, migration import, doctor checks, and lightweight code/doc references.
 
 What it does **not** do:
@@ -79,7 +80,7 @@ with one simpler memory owner that has clear boundaries:
 | Local SQLite | Fast operational memory: sessions, observations, review state, revisions, sync queue, lightweight artifact references. |
 | Hindsight | Durable semantic memory: retained facts, decisions, preferences, reflection/recall across sessions. |
 | Prompt injection | One bounded XML-like memory block appended before agent start, only when enabled. |
-| Compaction | Owner-mode continuity summary, generated mechanically from local rows. |
+| Compaction | Owner-mode continuity summary, generated mechanically from useful local rows, with fail-open fallback to Pi's default compaction. |
 
 This repository targets <https://github.com/vvbzv/pi-vibe-memory>. The README describes the package shape and current local/Git install flow; it does not claim the package is already published to npm.
 
@@ -114,7 +115,7 @@ Multiple memory extensions can silently fight each other:
 - Direct Hindsight HTTP integration for `retain`, `recall`, and `reflect`.
 - Optional Hindsight REST bootstrap from Pi MCP server config.
 - Bounded untrusted prompt memory injection.
-- Owner-mode custom compaction continuity.
+- Owner-mode custom compaction continuity with safeguards against noisy over-window loops.
 - Passive same-session meditation for candidate reflections/instincts.
 - Non-deleting comparative revision: old knowledge is preserved, superseded, and explainable.
 - Lightweight code/doc/config/test reference digesting from conversation and tool text only.
@@ -329,6 +330,38 @@ Partly, but with stricter boundaries:
 | Instinct | Yes, as working/reviewed memory items that may be included in the bounded memory block. |
 | Reflector | Sort of. `meditation` can use Hindsight `reflect()` to generate candidate reflections/instincts. It is not a separate prompt agent every turn. |
 | Pruner | Not destructively. Old knowledge can become `superseded` or `historical`, but the package avoids deleting memory. |
+
+---
+
+## Compaction explained
+
+When `vibeMemory.mode` is `"owner"` and `vibeMemory.compaction.mode` is `"owner"`, the package can provide a deterministic continuity summary during Pi session compaction. That summary is generated from local SQLite rows only. It does **not** call Hindsight and does **not** call an LLM during compaction.
+
+The custom compaction is intentionally conservative:
+
+- it requires Pi to provide a valid `firstKeptEntryId` before it returns a custom compaction;
+- it filters low-value tool-error telemetry such as `Assistant summary: tool=ctx_find ... status=error`;
+- it returns no custom compaction when only noisy telemetry exists;
+- in those cases, Pi falls back to its own default compaction, which is usually safer for recovering an over-window session because it can summarize the actual conversation history.
+
+This matters for repeated context-window failures. If a session gets into a state like:
+
+```text
+Compacted from 569,819 tokens
+Assistant summary: tool=ctx_find id=... status=error
+Error: input exceeds context window
+```
+
+then `pi-vibe-memory` should not replace Pi's normal compaction with a tiny memory-only summary. The safe behavior is to step aside unless it has useful continuity material.
+
+`compaction.mode` currently accepts only:
+
+| Mode | Meaning |
+|:-----|:--------|
+| `owner` | Allow `pi-vibe-memory` to provide a guarded custom compaction summary. |
+| `off` | Never provide custom compaction; Pi handles compaction normally. |
+
+Older notes or configs mentioning `compaction.mode: "observe"` are stale. That value is rejected because it looked meaningful but behaved like disabled compaction.
 
 ---
 
@@ -621,6 +654,33 @@ or deleting the stale `observational-memory` block entirely.
 ---
 
 ## Troubleshooting
+
+### LLM gets stuck after compaction or `input exceeds context window`
+
+If you see repeated output like:
+
+```text
+Compacted from 569,819 tokens
+Assistant summary: tool=ctx_find id=... status=error
+Error: input exceeds context window
+```
+
+update to a build that includes the compaction fail-open safeguard. The extension now refuses to provide a custom compaction summary when its local continuity data is only noisy tool-error telemetry, so Pi can use its default compaction to recover real conversation context.
+
+If an already-running session keeps looping, start a fresh Pi session after updating/reinstalling the package. A session that already contains bad compaction entries may continue replaying them until Pi gets a clean compaction boundary.
+
+If you want to remove `pi-vibe-memory` custom compaction while keeping tools and prompt memory, configure:
+
+```json
+{
+  "vibeMemory": {
+    "compaction": {
+      "enabled": true,
+      "mode": "off"
+    }
+  }
+}
+```
 
 ### `/vibe-memory-sync` still says partial
 

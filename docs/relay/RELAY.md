@@ -1,4 +1,4 @@
-# RELAY — Session 1 — 2026-05-18 — 🟢 Clean
+# RELAY — Session 2 — 2026-05-18 — 🟢 Clean
 
 ## 🚀 Priming prompt
 
@@ -15,7 +15,7 @@
 ## Pass header
 
 - **Pass type:** 🟢 Clean
-- **Session:** 1
+- **Session:** 2
 - **Date:** 2026-05-18
 - **Source LLM:** pi coding agent session
 - **Target LLM hint:** routed by task tags
@@ -24,8 +24,8 @@
 ## Layer 1 — Intent
 
 - **Original goal:** Build `pi-vibe-memory` as a single Pi Agents memory owner replacing `npm:pi-observational-memory` and `npm:pi-continuous-learning`.
-- **Current sub-goal:** Preserve a cold-start handoff after v1 implementation, deep audits, blocker fixes, isolated dogfood, stats feature, and GitHub push.
-- **In scope:** Pi-specific package, local SQLite memory, direct Hindsight REST integration with MCP credential bootstrap, bounded prompt injection, compaction owner mode, typed memories, review workflow, import/migration helpers, doctor diagnostics, stats tool/command, docs.
+- **Current sub-goal:** Preserve a cold-start handoff after v1 implementation, deep audits, blocker fixes, isolated dogfood, stats feature, GitHub push, lifecycle sync fixes, and compaction-loop hardening.
+- **In scope:** Pi-specific package, local SQLite memory, direct Hindsight REST integration with MCP credential bootstrap, bounded prompt injection, guarded compaction owner mode, typed memories, review workflow, import/migration helpers, doctor diagnostics, stats tool/command, docs.
 - **Out of scope:** OMP/Rust fork integration, `@oh-my-pi/*` imports, LaPis graph indexing, automatic writes to AGENTS/skills, destructive forgetting, merging this worktree into the parent mixed OMP workspace.
 
 ## Layer 2 — Progress
@@ -37,15 +37,17 @@
 | Deep review blocker fixes | ✅ Done | security/storage/runtime/Hindsight/package layers | 5 parallel re-audits passed before final dogfood. |
 | Final isolated dogfood | ✅ Done | external sandbox under `/tmp` | Doctor, remember/recall, hyphenated FTS recall, import dry-run/apply/review, safe-to-uninstall, and stats verified. |
 | Stats feature | ✅ Done | `src/constants.ts`, `src/storage/repository.ts`, `src/runtime.ts`, `src/tools.ts`, `src/commands.ts`, `tests/storage.test.ts`, `tests/tools.test.ts`, `README.md` | Added `vibe_memory_stats` and `/vibe-memory-stats`; committed and pushed as `1fa69d0`. |
-| Relay handoff | ✅ Done in this pass | `.gitignore`, `docs/relay/*` | Root `/relay` artifacts ignored; canonical tracked relay docs live in `docs/relay/`. |
+| Relay handoff | ✅ Done | `.gitignore`, `docs/relay/*` | Root `/relay` artifacts ignored; canonical tracked relay docs live in `docs/relay/`. |
+| Lifecycle sync fixes | ✅ Done | `src/hindsight/sync.ts`, `src/review.ts`, `src/storage/repository.ts`, `tests/runtime.test.ts`, `tests/storage.test.ts` | Review/status changes now update FTS and enqueue canonical Hindsight replacement payloads; superseding revisions sync old observations as superseded. |
+| Compaction-loop hardening | ✅ Done | `src/config.ts`, `src/runtime.ts`, `tests/config.test.ts`, `tests/runtime.test.ts`, `README.md`, `docs/relay/*` | Custom compaction requires `firstKeptEntryId`, filters tool-error telemetry, rejects stale `observe` mode, and falls back to Pi default compaction when only noisy telemetry remains. |
 
 ## Layer 3 — Runtime snapshot
 
-- **Git SHA before relay doc commit:** `1fa69d02f0f7e62506bf67e6d34ac7f739e3adb1`
+- **Git SHA before this relay doc update:** `0e262c82fbde6e2f96805319d820131c122f3ec5`
 - **Branch:** `pi-vibe-memory-v1`
-- **Remote branch:** `origin/pi-vibe-memory-v1` matched the SHA above before writing relay docs.
-- **Uncommitted before relay docs:** clean working tree at pushed SHA.
-- **Uncommitted at relay creation:** `.gitignore` and `docs/relay/*` only.
+- **Remote branch:** `origin/pi-vibe-memory-v1` matched the SHA above before writing this docs update.
+- **Uncommitted before docs update:** clean working tree at pushed SHA.
+- **Uncommitted at docs update:** `README.md` and `docs/relay/*` only.
 - **Worktree path:** `.worktrees/pi-vibe-memory-v1`
 - **Package version:** `0.1.0` in `package.json` even though this is the v1 milestone branch.
 - **Packed package shape:** `npm pack --dry-run --json` included 25 files: `README.md`, `package.json`, and `src/**/*.ts` only.
@@ -58,6 +60,8 @@
 - **Decision:** Use direct Hindsight REST, not MCP tool calls from inside the extension. **Why:** Pi extensions should not depend on agent MCP tool execution internals; REST can reuse MCP config credentials deterministically. **Trade-off:** Users still keep `hindsight_*` MCP tools for manual use.
 - **Decision:** Default to token-light owner mode with bounded untrusted XML injection. **Why:** User was worried about token usage; hard caps and section priorities prevent raw replay.
 - **Decision:** Add compaction owner mode. **Why:** User requires replacement of observational-memory and continuous-learning, so the new package must own compaction after legacy uninstall. **Trade-off:** Compaction summary is deterministic and mechanical; no LLM/Hindsight calls during compaction.
+- **Decision:** Make custom compaction fail open. **Why:** A tiny memory-only summary containing only `Assistant summary: tool=... status=error` rows can prevent Pi's default compaction from recovering actual conversation context and can cause repeated `input exceeds context window` failures. **Trade-off:** If local memory has no useful continuity, `pi-vibe-memory` steps aside and Pi's default compaction owns recovery.
+- **Decision:** Remove stale `compaction.mode: "observe"`. **Why:** It looked meaningful but behaved like disabled compaction; rejecting it avoids ambiguous config.
 - **Decision:** Non-deleting comparative revision. **Why:** User explicitly rejected automatic deletion; old knowledge must stay explainable with provenance.
 - **Decision:** Keep branch as-is, no local merge. **Why:** Parent repo has another OMP worktree; merging into the mixed parent could confuse repo state.
 
@@ -69,6 +73,8 @@
 - ❌ Do not rely on raw FTS5 user queries; hyphenated terms like `token-light` caused `no such column: light` until sanitized.
 - ❌ Do not report safe-to-uninstall after dry-run migration only; explicit apply must happen.
 - ❌ Do not treat Hindsight availability as fatal; local-first behavior is required.
+- ❌ Do not let custom compaction replace Pi default compaction when only noisy tool-error telemetry remains.
+- ❌ Do not reintroduce `compaction.mode: "observe"`; valid values are `"owner"` and `"off"`.
 - ❌ Do not merge this worktree into the mixed OMP parent unless the user explicitly asks and confirms the base branch.
 
 ## Layer 6 — Knowledge graph
@@ -95,32 +101,32 @@ flowchart TD
 
 Key relationships:
 
-- `src/config.ts` normalizes token budgets, owner/passive/toolsOnly mode, compaction mode, Hindsight REST/MCP bootstrap, conflict detection, and db path safety.
+- `src/config.ts` normalizes token budgets, owner/passive/toolsOnly mode, guarded compaction mode (`owner`/`off` only), Hindsight REST/MCP bootstrap, conflict detection, and db path safety.
 - `src/index.ts` registers tools/commands and Pi lifecycle hooks including `session_before_compact`.
-- `src/runtime.ts` is the orchestrator; it delegates persistence to repository and avoids LLM calls for automatic capture/compaction.
-- `src/storage/repository.ts` owns SQL access and now includes compact stats aggregation.
+- `src/runtime.ts` is the orchestrator; it delegates persistence to repository, avoids LLM calls for automatic capture/compaction, and fails open to Pi default compaction when useful local continuity is absent.
+- `src/storage/repository.ts` owns SQL access, compact stats aggregation, observation lifecycle updates, FTS refresh, and canonical replacement sync jobs.
 - `src/tools.ts` exposes `vibe_memory_*`; `src/commands.ts` exposes `/vibe-memory-*`.
 - `src/hindsight/sync.ts` writes namespaced, deterministic Hindsight documents tagged `pi-vibe-memory`.
 
 ## Layer 7 — Continuity
 
-- **Previous pass:** N/A — first tracked relay for this repo.
-- **Debt retired this pass:** Added handoff docs and ignored root relay scratch files so future `/relay` runs do not pollute commits accidentally.
-- **New debt introduced:** `docs/relay/*` is tracked project documentation; if future `/relay` output contains private info, review before push.
-- **Recurring risks:** Token budget regressions, accidental legacy extension conflicts, Hindsight duplicate memories if users also call `hindsight_retain` manually, and package version still showing `0.1.0` despite v1 naming.
-- **Handoff-quality delta vs previous:** Converted compacted session state into portable tracked docs under `docs/relay/` with exact verification evidence and next tasks.
+- **Previous pass:** Session 1 built and documented the v1 branch, stats feature, and first relay handoff.
+- **Debt retired this pass:** Compaction now fails open instead of replaying only low-value tool-error telemetry; lifecycle review/revision updates now enqueue canonical replacement sync payloads.
+- **New debt introduced:** Live Pi runtime compaction-loop dogfood is still useful after reinstall/update; docs should be rechecked before release because `docs/relay/*` is tracked.
+- **Recurring risks:** Token budget regressions, accidental legacy extension conflicts, Hindsight duplicate memories if users also call `hindsight_retain` manually, package version still showing `0.1.0` despite v1 naming, and live over-window behavior depending on Pi's compaction implementation.
+- **Handoff-quality delta vs previous:** Relay docs now capture the exact over-window failure mode, the fail-open compaction rule, and the post-fix verification target.
 
 ## Verification results
 
 ```text
-$ npm test
-130/130 tests passed.
-
 $ npm run check
 tsc --noEmit completed with 0 reported errors.
 
+$ npm test
+137/137 tests passed.
+
 $ npm pack --dry-run --json
-Packed pi-vibe-memory@0.1.0 with 25 files; package contents limited to README.md, package.json, and src/**/*.ts.
+Previously packed pi-vibe-memory@0.1.0 with 25 files; package contents limited to README.md, package.json, and src/**/*.ts.
 
 $ PI_CODING_AGENT_DIR=<isolated sandbox> pi --no-extensions --offline -e ./src/index.ts --no-builtin-tools --tools vibe_memory_stats --model dogfood/qwen3-coder:480b -p "Use vibe_memory_stats ..."
 vibe_memory_stats returned owner-mode counts, sync status, compaction owner-active, prompt budget, and 0 conflicts.
@@ -128,7 +134,8 @@ vibe_memory_stats returned owner-mode counts, sync status, compaction owner-acti
 
 ## Not verified
 
-- Live Hindsight server retain/recall against the user's Unraid Hindsight server in this final pass: not rerun after stats because stats is local-only and prior Hindsight/MCP bootstrap was tested earlier.
+- Live Hindsight server retain/recall against the user's Unraid Hindsight server in this final pass: not rerun after stats/lifecycle fixes because local-first behavior and tests covered the changed paths.
+- Live over-window Pi runtime dogfood after reinstall/update: not performed; regression test covers the hook behavior.
 - npm publish: not performed.
 - Pull request creation: not performed because user chose to keep branch as-is.
 
@@ -137,6 +144,7 @@ vibe_memory_stats returned owner-mode counts, sync status, compaction owner-acti
 - `package.json` version is still `0.1.0`; decide whether to bump to `1.0.0` before publishing.
 - Branch is pushed, but not merged; consumers should install from branch or wait for PR/main integration.
 - Final dogfood used Hindsight disabled/local-first mode for the stats check; live Hindsight should be smoke-tested before production migration.
+- The compaction-loop fix is regression-tested but not yet dogfooded in a live over-window Pi session after reinstall/update.
 - This worktree lives under a parent repo that also contains OMP work; avoid accidental cross-merge or cross-commit.
 
 ## Reproduction block

@@ -10,7 +10,7 @@ The package is local-first with SQLite persistence, deterministic capture, bound
 
 ## Safety conventions — updated 2026-05-18
 
-Automatic memory operations are deterministic and must not call hidden internal LLM agents. Compaction must not call Hindsight or an LLM. Old knowledge is superseded/inhibited with provenance rather than deleted. Prompt rendering and tool output must be token-light and scrub secrets.
+Automatic memory operations are deterministic and must not call hidden internal LLM agents. Compaction must not call Hindsight or an LLM. Custom compaction is fail-open: require a valid `firstKeptEntryId`, filter low-value `Assistant summary: tool=... status=error` telemetry, and return `undefined` when only noisy telemetry exists so Pi can use its default compaction. Old knowledge is superseded/inhibited with provenance rather than deleted. Prompt rendering and tool output must be token-light and scrub secrets.
 
 ## Branch state — updated 2026-05-18
 
