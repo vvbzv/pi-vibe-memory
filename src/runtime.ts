@@ -170,9 +170,16 @@ export class VibeMemoryRuntime {
     if (!this.settings.enabled || this.settings.mode !== "owner" || !this.settings.compaction.enabled || this.settings.compaction.mode !== "owner") return undefined;
     if (this.conflicts.length > 0) return undefined;
     if (shouldSkipCustomCompaction(event.branchEntries ?? [])) return undefined;
+    if (!event.preparation?.firstKeptEntryId) return undefined;
 
     try {
-      const observations = this.repository.listPromptObservations?.({ workspaceId: this.workspaceId, limit: this.settings.compaction.maxObservations }) ?? [];
+      const observations = (this.repository.listPromptObservations?.({ workspaceId: this.workspaceId, limit: this.settings.compaction.maxObservations }) ?? [])
+        .filter((item) => !isLowValueToolErrorObservation(item));
+      const hasUsefulCompactionContext = observations.length > 0
+        || (this.repository.listPromptInstincts?.({ workspaceId: this.workspaceId, limit: 1 }) ?? []).length > 0
+        || (this.repository.listArtifactReferences?.({ workspaceId: this.workspaceId, limit: 1 }) ?? []).length > 0;
+      if (!hasUsefulCompactionContext) return undefined;
+
       const decisions = observations
         .filter((item) => item.kind === "project_decision" || item.kind === "decision")
         .slice(0, this.settings.compaction.maxFacts);
@@ -759,6 +766,12 @@ export class VibeMemoryRuntime {
   }
 }
 
+
+function isLowValueToolErrorObservation(observation: ObservationRecord): boolean {
+  if (observation.kind !== "turn_summary") return false;
+  const content = observation.content.trim();
+  return /^Assistant summary:\s*tool=\S+\s+id=\S+\s+status=error(?:\s+error=.*)?$/i.test(content);
+}
 
 function parseHindsightMemories(value: unknown, fallbackBank: string): PromptHindsightMemory[] {
   const items = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.memories) ? value.memories : isRecord(value) && Array.isArray(value.items) ? value.items : [];

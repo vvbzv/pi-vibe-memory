@@ -6,7 +6,7 @@ export type CaptureToolOutput = "off" | "errors" | "summaries";
 export type HindsightBudget = "low" | "mid" | "high";
 export type HindsightConfigSource = "rest" | "mcp";
 export type HindsightRecallScope = "vibeOnly" | "bankWide" | "hybrid";
-export type VibeMemoryCompactionMode = "off" | "observe" | "owner";
+export type VibeMemoryCompactionMode = "off" | "owner";
 
 export interface NormalizedVibeMemorySettings {
   enabled: boolean;
@@ -237,7 +237,7 @@ export function normalizeSettings(raw: JsonObject | undefined): NormalizedVibeMe
     compaction: {
       ...merged.compaction,
       enabled: merged.compaction.enabled !== false,
-      mode: assertOneOf("compaction.mode", merged.compaction.mode, ["off", "observe", "owner"]),
+      mode: assertOneOf("compaction.mode", merged.compaction.mode, ["off", "owner"]),
       maxSummaryChars: assertPositiveInteger("compaction.maxSummaryChars", merged.compaction.maxSummaryChars),
       maxObservations: assertPositiveInteger("compaction.maxObservations", merged.compaction.maxObservations),
       maxInstincts: assertPositiveInteger("compaction.maxInstincts", merged.compaction.maxInstincts),

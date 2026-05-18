@@ -1,3 +1,4 @@
+import { buildHindsightMemoryItem } from "../hindsight/sync.js";
 import type { VibeMemoryDb } from "./db.js";
 
 export type MemoryStatus = "active" | "superseded" | "historical" | "working" | "needs_review";
@@ -327,43 +328,66 @@ export class VibeMemoryRepository {
   }
 
   updateObservationReview(input: { id: string; status: MemoryStatus; scope?: string; tags?: string[] }): ObservationRecord | undefined {
-    const existing = this.getObservation(input.id);
-    if (!existing) return undefined;
-    const tags = uniqueStrings(input.tags ?? existing.tags);
-    this.db.prepare(`
-      UPDATE observations
-      SET status = @status, scope = @scope, tags_json = @tagsJson, updated_at = @updatedAt
-      WHERE id = @id
-    `).run({ id: input.id, status: input.status, scope: input.scope ?? existing.scope, tagsJson: stringify(tags), updatedAt: isoNow() });
-    const updated = this.getObservation(input.id);
-    if (updated) this.enqueueSyncJob({
-      id: `sync:pi:observation:${updated.id}`,
-      observationId: updated.id,
-      operation: "retain_observation",
-      payload: { bankId: "pi", items: [{ content: `status:${updated.status}\nscope:${updated.scope}\n${updated.content}`, documentId: `pi-observation:${updated.id}`, updateMode: "replace", tags: updated.tags }] },
-    });
-    return updated;
+    return this.updateObservationLifecycle(input);
   }
 
   setObservationStatus(id: string, status: MemoryStatus): void {
-    this.db.prepare("UPDATE observations SET status = @status, updated_at = @updatedAt WHERE id = @id")
-      .run({ id, status, updatedAt: isoNow() });
+    this.updateObservationLifecycle({ id, status, enqueueSync: false });
   }
 
   recordMemoryRevision(input: MemoryRevisionInput): void {
-    const now = isoNow();
     const record = this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO memory_revisions (id, old_observation_id, new_observation_id, relation, reason, created_at)
         VALUES (@id, @oldObservationId, @newObservationId, @relation, @reason, @now)
-      `).run({ ...input, now });
+      `).run({ ...input, now: isoNow() });
 
       if (input.relation === "supersedes") {
-        this.db.prepare("UPDATE observations SET status = 'superseded', updated_at = @now WHERE id = @id")
-          .run({ id: input.oldObservationId, now });
+        this.updateObservationLifecycle({ id: input.oldObservationId, status: "superseded" });
       }
     });
     record();
+  }
+
+  private updateObservationLifecycle(input: { id: string; status?: MemoryStatus; scope?: string; tags?: string[]; enqueueSync?: boolean }): ObservationRecord | undefined {
+    const existing = this.getObservation(input.id);
+    if (!existing) return undefined;
+    const updatedAt = isoNow();
+    const status = input.status ?? existing.status;
+    const scope = input.scope ?? existing.scope;
+    const tags = uniqueStrings(input.tags ?? existing.tags);
+
+    const update = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE observations
+        SET status = @status, scope = @scope, tags_json = @tagsJson, updated_at = @updatedAt
+        WHERE id = @id
+      `).run({ id: input.id, status, scope, tagsJson: stringify(tags), updatedAt });
+
+      const updated = this.getObservation(input.id);
+      if (!updated) return undefined;
+      this.replaceObservationFts(updated);
+      if (input.enqueueSync !== false) this.enqueueObservationReplacement(updated, "pi");
+      return updated;
+    });
+    return update();
+  }
+
+  private replaceObservationFts(observation: ObservationRecord): void {
+    this.db.prepare("DELETE FROM observations_fts WHERE observation_id = ?").run(observation.id);
+    this.db.prepare(`
+      INSERT INTO observations_fts (observation_id, workspace_id, title, content, kind, scope)
+      VALUES (@id, @workspaceId, @title, @content, @kind, @scope)
+    `).run(observation);
+  }
+
+  private enqueueObservationReplacement(observation: ObservationRecord, bankId: string): void {
+    this.enqueueSyncJob({
+      id: `sync:${bankId}:observation:${observation.id}`,
+      observationId: observation.id,
+      operation: "retain_observation",
+      payload: { bankId, items: [buildHindsightMemoryItem(observation)] },
+    });
   }
 
   listMemoryRevisions(observationId: string): MemoryRevisionRecord[] {

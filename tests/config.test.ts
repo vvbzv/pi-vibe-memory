@@ -79,7 +79,7 @@ test("normalizeSettings validates compaction settings", () => {
   const settings = normalizeSettings({
     compaction: {
       enabled: false,
-      mode: "observe",
+      mode: "off",
       maxSummaryChars: 1200,
       maxObservations: 2,
       maxInstincts: 1,
@@ -93,7 +93,7 @@ test("normalizeSettings validates compaction settings", () => {
   });
 
   assert.equal(settings.compaction.enabled, false);
-  assert.equal(settings.compaction.mode, "observe");
+  assert.equal(settings.compaction.mode, "off");
   assert.equal(settings.compaction.maxSummaryChars, 1200);
   assert.equal(settings.compaction.maxObservations, 2);
   assert.equal(settings.compaction.maxInstincts, 1);
@@ -104,6 +104,7 @@ test("normalizeSettings validates compaction settings", () => {
   assert.equal(settings.compaction.includeFileOps, false);
   assert.equal(settings.compaction.failOpen, false);
 
+  assert.throws(() => normalizeSettings({ compaction: { mode: "observe" } }), /compaction\.mode/);
   assert.throws(() => normalizeSettings({ compaction: { mode: "passive" } }), /compaction\.mode/);
   assert.throws(() => normalizeSettings({ compaction: { maxSummaryChars: 0 } }), /compaction\.maxSummaryChars/);
   assert.throws(() => normalizeSettings({ compaction: { maxObservations: -1 } }), /compaction\.maxObservations/);

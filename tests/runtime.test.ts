@@ -55,7 +55,6 @@ class FakeRepository {
   listMemoryRevisions() { return this.revisions; }
   recordMemoryRevision(input: any) { this.revisions.push(input); }
   addInstinctCandidate(input: any) { this.candidates.push(input); }
-  setObservationStatus(id: string, status: string) { const item = this.observations.find((obs) => obs.id === id) ?? this.promptObservations.find((obs) => obs.id === id); if (item) item.status = status; }
   updateObservationReview(input: any) { const item = this.observations.find((obs) => obs.id === input.id) ?? this.promptObservations.find((obs) => obs.id === input.id); if (!item) return; item.status = input.status; if (input.scope) item.scope = input.scope; if (input.tags) item.tags = input.tags; this.enqueueSyncJob({ id: `sync:pi:observation:${input.id}`, observationId: input.id, operation: "retain_observation", payload: { bankId: "pi", items: [{ content: item.content, metadata: { scope: item.scope, status: item.status }, tags: item.tags }] } }); return item; }
   setInstinctCandidateStatus(id: string, status: string) { const item = this.candidates.find((candidate) => candidate.id === id) ?? this.promptInstincts.find((candidate) => candidate.id === id); if (item) item.status = status; }
   listReviewObservations() { return this.observations.filter((item) => item.status === "needs_review").concat(this.promptObservations.filter((item) => item.status === "needs_review")); }
@@ -454,6 +453,7 @@ test("review lists candidates and applies non-destructive actions", async () => 
   const approved = await runtime.review({ action: "approve_active", id: "obs-review" }) as any;
   assert.equal(approved.status, "active");
   assert.equal(repository.promptObservations[0].status, "active");
+  assert.equal(repository.syncJobs[0]?.id, "sync:pi:observation:obs-review");
 
   const deferred = await runtime.review({ action: "defer", id: "inst-review" }) as any;
   assert.equal(deferred.status, "needs_review");
@@ -544,7 +544,7 @@ test("beforeCompact returns owner compaction without calling Hindsight", async (
   assert.match(result?.compaction.summary ?? "", /Write tests first/);
 });
 
-test("beforeCompact skips disabled, passive top-level mode, non-owner compaction, conflicts, and competing compaction owner", async () => {
+test("beforeCompact skips disabled, passive top-level mode, non-owner compaction, conflicts, malformed preparation, and competing compaction owner", async () => {
   const repository = new FakeRepository();
   repository.promptObservations = [{ id: "fact1", kind: "project_fact", content: "One memory extension", status: "active" }];
 
@@ -553,18 +553,49 @@ test("beforeCompact skips disabled, passive top-level mode, non-owner compaction
     { settings: settings({ mode: "passive", compaction: { mode: "owner" } }) },
     { settings: settings({ compaction: { enabled: false } }) },
     { settings: settings({ compaction: { mode: "off" } }) },
-    { settings: settings({ compaction: { mode: "observe" } }) },
     { settings: settings({ mode: "owner", compaction: { mode: "owner" } }), conflicts: ["other owner"] },
   ]) {
     const runtime = new VibeMemoryRuntime({ ...options, repository, workspaceId: "ws1", sessionId: "s1" });
     assert.equal(await runtime.beforeCompact({ preparation: { firstKeptEntryId: "entry", tokensBefore: 1 }, branchEntries: [] } as any), undefined);
   }
 
-  const runtime = new VibeMemoryRuntime({ settings: settings({ compaction: { mode: "owner" } }), repository, workspaceId: "ws1", sessionId: "s1" });
-  const result = await runtime.beforeCompact({
+  const ownerRuntime = new VibeMemoryRuntime({ settings: settings({ compaction: { mode: "owner" } }), repository, workspaceId: "ws1", sessionId: "s1" });
+  assert.equal(await ownerRuntime.beforeCompact({ preparation: { tokensBefore: 569819 }, branchEntries: [] } as any), undefined);
+
+  const result = await ownerRuntime.beforeCompact({
     preparation: { firstKeptEntryId: "entry", tokensBefore: 1 },
     branchEntries: [{ type: "compaction", details: { type: "observational-memory" } }],
   } as any);
+  assert.equal(result, undefined);
+});
+
+test("beforeCompact filters low-value tool error telemetry from summaries", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [
+    { id: "noise", kind: "turn_summary", content: "Assistant summary: tool=ctx_find id=call_123 status=error", status: "active" },
+    { id: "fact1", kind: "project_fact", content: "One memory extension", status: "active" },
+  ];
+  const runtime = new VibeMemoryRuntime({ settings: settings({ compaction: { mode: "owner", maxSummaryChars: 2000 } }), repository, workspaceId: "ws1", sessionId: "s1" });
+
+  const result = await runtime.beforeCompact({ preparation: { firstKeptEntryId: "entry", tokensBefore: 1 }, branchEntries: [] } as any);
+
+  assert.match(result?.compaction.summary ?? "", /One memory extension/);
+  assert.doesNotMatch(result?.compaction.summary ?? "", /ctx_find|call_123|status=error/);
+});
+
+test("beforeCompact falls back to Pi default compaction for noisy over-window telemetry", async () => {
+  const repository = new FakeRepository();
+  repository.promptObservations = [
+    { id: "obs_4b2b711042461dda", kind: "turn_summary", content: "Assistant summary: tool=ctx_find id=call_MWlioELSQo2qNAOKNGuH34hL status=error", status: "active" },
+    { id: "obs_a6e5278ca536442c", kind: "turn_summary", content: "Assistant summary: tool=ctx_find id=call_w6p1n9eMGtlzE7fJLiLqKoub status=error", status: "active" },
+    { id: "obs_ab06f54d234fcd23", kind: "turn_summary", content: "Assistant summary: tool=ctx_find id=call_aseQnyGKvmHdlCXcvKhO9Zh6 status=error", status: "active" },
+    { id: "obs_c4fea1c76d6fc673", kind: "turn_summary", content: "Assistant summary: tool=bash id=call_0edROrUVksEFsm7ujGSL6lea status=error", status: "active" },
+  ];
+  repository.pendingJobs = [{ id: "sync1" }, { id: "sync2" }, { id: "sync3" }, { id: "sync4" }];
+  const runtime = new VibeMemoryRuntime({ settings: settings({ compaction: { mode: "owner", maxSummaryChars: 8000 } }), repository, workspaceId: "ws1", sessionId: "s1" });
+
+  const result = await runtime.beforeCompact({ preparation: { firstKeptEntryId: "entry", tokensBefore: 569819 }, branchEntries: [] } as any);
+
   assert.equal(result, undefined);
 });
 

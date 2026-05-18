@@ -1,7 +1,7 @@
 import { createArtifactDocumentId, createObservationDocumentId } from "./banks.js";
 import type { HindsightMetadata, MemoryItemInput } from "./client.js";
 import { scrubSecrets } from "../scrub.js";
-import type { ObservationRecord, SyncJobInput, SyncJobRecord, VibeMemoryRepository } from "../storage/repository.js";
+import type { ObservationRecord, SyncJobInput, SyncJobRecord } from "../storage/repository.js";
 
 export { createArtifactDocumentId as buildArtifactDocumentId } from "./banks.js";
 
@@ -71,7 +71,7 @@ export function buildHindsightMemoryItem(observation: ObservationRecord): Memory
 }
 
 export function enqueueObservationSync(
-  repository: Pick<VibeMemoryRepository, "enqueueSyncJob">,
+  repository: Pick<SyncQueueRepository, "enqueueSyncJob">,
   observation: ObservationRecord,
   bankId: string,
 ): void {

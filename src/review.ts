@@ -64,17 +64,17 @@ export function applyReviewAction(repository: ReviewRepository, params: ReviewPa
   if (!item) throw new Error(`review item not found: ${id}`);
 
   const scope = stringParam(params.scope);
-  const tags = uniqueStrings(stringArrayParam(params.tags) ?? []);
+  const tagInput = stringArrayParam(params.tags);
+  const tags = uniqueStrings(tagInput ?? []);
 
-  if (action === "approve_scoped") {
-    if (item.itemType !== "observation") throw new Error("approve_scoped is supported for observations only");
-    const updated = repository.updateObservationReview?.({ id, status, scope, tags });
+  if (action === "approve_scoped" && item.itemType !== "observation") throw new Error("approve_scoped is supported for observations only");
+
+  if (item.itemType === "observation") {
+    const updated = repository.updateObservationReview?.({ id, status, scope: action === "approve_scoped" ? scope : undefined, tags: action === "approve_scoped" && tagInput !== undefined ? tags : undefined });
     if (!updated) repository.setObservationStatus?.(id, status);
-    return { action, id, itemType: item.itemType, status, scope, tags };
+  } else {
+    repository.setInstinctCandidateStatus?.(id, status);
   }
-
-  if (item.itemType === "observation") repository.setObservationStatus?.(id, status);
-  else repository.setInstinctCandidateStatus?.(id, status);
 
   return { action, id, itemType: item.itemType, status, scope, tags };
 }

@@ -185,9 +185,11 @@ test("repository filters typed observations and updates review statuses", async 
     );
     assert.deepEqual(repo.listReviewObservations({ workspaceId: "ws1", limit: 10 }).map((item) => item.id), ["review1"]);
 
-    repo.setObservationStatus("review1", "active");
+    const updated = repo.updateObservationReview({ id: "review1", status: "active" });
     repo.setInstinctCandidateStatus("inst1", "active");
+    assert.equal(updated?.status, "active");
     assert.equal(repo.getObservation("review1")?.status, "active");
+    assert.equal(repo.listPendingSyncJobs(10).at(-1)?.id, "sync:pi:observation:review1");
     assert.equal(repo.listPromptInstincts({ workspaceId: "ws1", limit: 10 }).find((item) => item.id === "inst1")?.status, "active");
   } finally {
     db.close();
@@ -214,21 +216,49 @@ test("repository orders sync, search, reviews, and revisions with deterministic 
   } finally { db.close(); }
 });
 
-test("repository scoped observation approval persists status, scope, tags and queues changed observation", async () => {
+test("repository observation lifecycle updates persist status, scope, tags, FTS, and sync payload", async () => {
   const db = openVibeMemoryDb(await tempDbPath());
   try {
     const repo = new VibeMemoryRepository(db);
     repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
     repo.addObservation({ id: "review1", workspaceId: "ws1", kind: "project_fact", scope: "project", title: "Review", content: "Needs scoped approval.", tags: ["old"], status: "needs_review" });
-    repo.updateObservationReview({ id: "review1", status: "active", scope: "global", tags: ["approved", "approved", "global"] });
+    const updated = repo.updateObservationReview({ id: "review1", status: "active", scope: "global", tags: ["approved", "approved", "global"] });
+    assert.equal(updated?.status, "active");
+    assert.equal(updated?.scope, "global");
+    assert.deepEqual(updated?.tags, ["approved", "global"]);
     const observation = repo.getObservation("review1");
     assert.equal(observation?.status, "active");
     assert.equal(observation?.scope, "global");
     assert.deepEqual(observation?.tags, ["approved", "global"]);
+
+    const ftsRow = db.prepare("SELECT scope FROM observations_fts WHERE observation_id = ?").get("review1") as { scope?: string } | undefined;
+    assert.equal(ftsRow?.scope, "global");
+
     const job = repo.listPendingSyncJobs(10)[0];
     assert.equal(job?.id, "sync:pi:observation:review1");
+    assert.match(JSON.stringify(job?.payload), /Status: active/);
+    assert.match(JSON.stringify(job?.payload), /Scope: global/);
     assert.match(JSON.stringify(job?.payload), /status:active/);
-    assert.match(JSON.stringify(job?.payload), /scope:global/);
+    assert.match(JSON.stringify(job?.payload), /pi-vibe-memory/);
+  } finally { db.close(); }
+});
+
+test("repository supersede revisions queue replacement sync for the old observation", async () => {
+  const db = openVibeMemoryDb(await tempDbPath());
+  try {
+    const repo = new VibeMemoryRepository(db);
+    repo.upsertWorkspace({ id: "ws1", name: "Project", rootPath: "/tmp/project" });
+    repo.addObservation({ id: "old-sync", workspaceId: "ws1", kind: "project_fact", scope: "project", title: "Old", content: "Old sync memory", status: "active" });
+    repo.addObservation({ id: "new-sync", workspaceId: "ws1", kind: "project_fact", scope: "project", title: "New", content: "New sync memory", status: "active" });
+
+    repo.recordMemoryRevision({ id: "rev-sync", oldObservationId: "old-sync", newObservationId: "new-sync", relation: "supersedes", reason: "Newer evidence" });
+
+    const old = repo.getObservation("old-sync");
+    assert.equal(old?.status, "superseded");
+    const job = repo.listPendingSyncJobs(10).find((item) => item.observationId === "old-sync");
+    assert.equal(job?.id, "sync:pi:observation:old-sync");
+    assert.match(JSON.stringify(job?.payload), /Status: superseded/);
+    assert.match(JSON.stringify(job?.payload), /provenance only/);
   } finally { db.close(); }
 });
 
@@ -245,6 +275,7 @@ test("repository returns compact memory stats", async () => {
     repo.addInstinctCandidate({ id: "inst1", workspaceId: "ws1", kind: "behavior_instinct", content: "Use tests.", status: "needs_review" });
     repo.upsertArtifactReference({ id: "art1", workspaceId: "ws1", path: "src/runtime.ts", artifactType: "code_reference" });
     repo.recordMemoryRevision({ id: "rev1", oldObservationId: "old1", newObservationId: "active1", relation: "supersedes", reason: "Newer fact" });
+    repo.markSyncJobDone("sync:pi:observation:old1");
     repo.enqueueSyncJob({ id: "sync1", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "x" }] } });
     repo.markSyncJobFailed("sync1", "temporary offline");
 
