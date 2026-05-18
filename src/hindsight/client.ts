@@ -3,6 +3,7 @@ import { PACKAGE_NAME } from "../constants.js";
 import type { HindsightBudget } from "../config.js";
 
 type JsonObject = Record<string, unknown>;
+export type HindsightMetadata = Record<string, string>;
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export type RetainUpdateMode = "append" | "replace";
@@ -21,7 +22,7 @@ export interface MemoryItemInput {
   documentId?: string;
   updateMode?: RetainUpdateMode;
   tags?: string[];
-  metadata?: JsonObject;
+  metadata?: HindsightMetadata;
 }
 
 export interface RetainOptions {

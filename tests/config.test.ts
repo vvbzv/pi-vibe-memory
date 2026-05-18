@@ -6,6 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import {
   DEFAULT_SETTINGS,
   detectConflicts,
+  detectMemoryOwnerIssues,
   loadVibeMemorySettingsFromFiles,
   normalizeSettings,
 } from "../src/config.js";
@@ -178,10 +179,62 @@ test("loadVibeMemorySettingsFromFiles derives bank from /mcp/<bank>/sse path seg
   assert.equal(settings.hindsight.bank, "team-memory");
 });
 
-test("detectConflicts ignores passive or disabled migration-only legacy config", () => {
-  assert.deepEqual(detectConflicts({
+test("loadVibeMemorySettingsFromFiles warns when REST localhost is used while Hindsight MCP exists", async () => {
+  const root = await tempDir();
+  const settingsPath = path.join(root, "settings.json");
+  const mcpPath = path.join(root, "custom-mcp.json");
+
+  await writeFile(settingsPath, JSON.stringify({ vibeMemory: { hindsight: { enabled: true } } }));
+  await writeFile(mcpPath, JSON.stringify({ mcpServers: { hindsight: { url: "http://192.168.1.112:8888/mcp/pi/sse" } } }));
+
+  const settings = await loadVibeMemorySettingsFromFiles([settingsPath], { mcpConfigPath: mcpPath });
+
+  assert.equal(settings.hindsight.source, "rest");
+  assert.equal(settings.hindsight.baseUrl, DEFAULT_SETTINGS.hindsight.baseUrl);
+  assert.ok(settings.configWarnings.some((warning) => /Hindsight MCP server.*hindsight.*configured.*source.*mcp/i.test(warning)));
+});
+
+test("detectMemoryOwnerIssues classifies installed and stale observational-memory settings", () => {
+  assert.deepEqual(detectMemoryOwnerIssues({
+    packages: ["npm:pi-observational-memory"],
+    "observational-memory": { passive: false },
+  }), {
+    conflicts: ["pi-observational-memory is installed and active; set observational-memory.passive=true or remove npm:pi-observational-memory."],
+    warnings: [],
+  });
+
+  assert.deepEqual(detectMemoryOwnerIssues({
+    packages: ["git:github.com/vvbzv/pi-vibe-memory"],
+    "observational-memory": { passive: false },
+  }), {
+    conflicts: [],
+    warnings: ["Stale observational-memory settings remain in ~/.pi/agent/settings.json with passive:false, but npm:pi-observational-memory is not installed; set observational-memory.passive=true or remove that block."],
+  });
+
+  assert.deepEqual(detectMemoryOwnerIssues({
+    packages: ["git:github.com/vvbzv/pi-vibe-memory"],
+    "observational-memory": { passive: false },
+    vibeMemory: { strictSingleOwner: true },
+  }), {
+    conflicts: ["Stale observational-memory settings remain in ~/.pi/agent/settings.json with passive:false and strictSingleOwner=true; set observational-memory.passive=true or remove that block."],
+    warnings: [],
+  });
+
+  assert.deepEqual(detectMemoryOwnerIssues({
     packages: ["npm:pi-observational-memory"],
     "observational-memory": { passive: true },
+  }), { conflicts: [], warnings: [] });
+
+  assert.deepEqual(detectMemoryOwnerIssues({
+    packages: ["git:github.com/vvbzv/pi-vibe-memory"],
+    "observational-memory": { passive: true },
+  }), { conflicts: [], warnings: [] });
+});
+
+test("detectConflicts remains a hard-conflict compatibility wrapper", () => {
+  assert.deepEqual(detectConflicts({
+    packages: ["git:github.com/vvbzv/pi-vibe-memory"],
+    "observational-memory": { passive: false },
   }), []);
 
   assert.deepEqual(detectConflicts({ continuousLearning: { enabled: false } }), []);
@@ -191,13 +244,13 @@ test("detectConflicts ignores passive or disabled migration-only legacy config",
   }), []);
 });
 
-test("detectConflicts warns about known memory owners", () => {
-  const conflicts = detectConflicts({
+test("detectMemoryOwnerIssues reports known installed memory owners", () => {
+  const report = detectMemoryOwnerIssues({
     packages: ["npm:pi-observational-memory", "npm:pi-continuous-learning", "git:github.com/GeneGulanesJr/LaPis"],
     "observational-memory": { passive: false },
   });
 
-  assert.ok(conflicts.some((c) => c.includes("pi-observational-memory")));
-  assert.ok(conflicts.some((c) => c.includes("pi-continuous-learning")));
-  assert.ok(conflicts.some((c) => c.includes("LaPis")));
+  assert.ok(report.conflicts.some((c) => c.includes("pi-observational-memory")));
+  assert.ok(report.conflicts.some((c) => c.includes("pi-continuous-learning")));
+  assert.ok(report.conflicts.some((c) => c.includes("LaPis")));
 });

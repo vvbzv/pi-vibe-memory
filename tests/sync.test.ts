@@ -41,6 +41,19 @@ test("buildHindsightMemoryItem uses deterministic document ids, replace mode, an
     "status:active",
     "decision",
   ]);
+  assert.deepEqual(item.metadata, {
+    source: "pi-vibe-memory",
+    observationId: "obs1",
+    workspaceId: "ws1",
+    sessionId: "s1",
+    kind: "decision",
+    scope: "project",
+    status: "active",
+    confidence: "0.8",
+    trust: "0.9",
+    updatedAt: "2026-05-17T00:00:00.000Z",
+  });
+  assert.ok(Object.values(item.metadata ?? {}).every((value) => typeof value === "string"));
   assert.match(item.content, /Status: active/);
   assert.match(item.content, /Kind: decision/);
 });
@@ -145,12 +158,12 @@ test("enqueueObservationSync stores a retain payload for the observation bank", 
   }
 });
 
-test("flushSyncQueue flushes one job at a time to avoid partial retain ambiguity", async () => {
+test("flushSyncQueue flushes one job at a time and normalizes legacy metadata", async () => {
   const marked: string[] = [];
   const calls: Array<{ bankId: string; items: unknown[] }> = [];
   const repository = {
     listPendingSyncJobs: () => [
-      { id: "job1", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "hello" }] }, attempts: 0, createdAt: "now", updatedAt: "now" },
+      { id: "job1", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "hello", metadata: { confidence: 0.55, trust: 0.65, source: "pi-vibe-memory" } }] }, attempts: 0, createdAt: "now", updatedAt: "now" },
       { id: "job2", operation: "retain_observation", payload: { bankId: "pi", items: [{ content: "world" }] }, attempts: 0, createdAt: "now", updatedAt: "now" },
     ],
     markSyncJobDone: (id: string) => marked.push(id),
@@ -166,7 +179,7 @@ test("flushSyncQueue flushes one job at a time to avoid partial retain ambiguity
   const result = await flushSyncQueue({ repository, hindsight, maxBatchItems: 10 });
 
   assert.deepEqual(calls, [
-    { bankId: "pi", items: [{ content: "hello" }] },
+    { bankId: "pi", items: [{ content: "hello", metadata: { confidence: "0.55", trust: "0.65", source: "pi-vibe-memory" } }] },
     { bankId: "pi", items: [{ content: "world" }] },
   ]);
   assert.deepEqual(marked, ["job1", "job2"]);

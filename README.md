@@ -64,8 +64,8 @@ Enable `pi-vibe-memory` as the single memory owner. Do not run another memory ow
     },
     "hindsight": {
       "enabled": true,
-      "source": "rest",
-      "baseUrl": "http://localhost:8888",
+      "source": "mcp",
+      "mcpServer": "hindsight",
       "bank": "pi",
       "recallScope": "hybrid",
       "bankWideLimit": 1
@@ -88,7 +88,7 @@ Enable `pi-vibe-memory` as the single memory owner. Do not run another memory ow
 
 ## Hindsight MCP bootstrap
 
-Set `hindsight.source` to `"mcp"` to derive REST settings from Pi's MCP configuration instead of duplicating them in `settings.json`.
+Set `hindsight.source` to `"mcp"` to derive REST settings from Pi's MCP configuration instead of duplicating them in `settings.json`. This is the recommended setup when Pi already has a working Hindsight MCP server; it avoids the default REST fallback of `http://localhost:8888` pointing at the wrong host.
 
 ```json
 {
@@ -108,6 +108,21 @@ Set `hindsight.source` to `"mcp"` to derive REST settings from Pi's MCP configur
 When enabled, `pi-vibe-memory` reads the configured MCP server from `mcp.json`. URLs such as `http://localhost:8888/mcp/pi/` are converted to REST base URL `http://localhost:8888`; bearer auth headers are reused; the bank name can be inferred from the MCP URL when the package bank is still the default.
 
 Hindsight offline is a warning, not a fatal error. Local memory continues to work.
+
+If you do run Hindsight directly on the same machine instead of through MCP, use REST explicitly:
+
+```json
+{
+  "vibeMemory": {
+    "hindsight": {
+      "enabled": true,
+      "source": "rest",
+      "baseUrl": "http://localhost:8888",
+      "bank": "pi"
+    }
+  }
+}
+```
 
 ## Migration from legacy memory packages
 
@@ -221,7 +236,7 @@ Run `npm pack --dry-run --json` and inspect the `files` list before publishing.
 
 ### Doctor reports a competing memory owner
 
-Set legacy memory packages passive/disabled, or remove them after migration:
+Set installed legacy memory packages passive/disabled, or remove them after migration:
 
 ```json
 {
@@ -230,11 +245,42 @@ Set legacy memory packages passive/disabled, or remove them after migration:
 }
 ```
 
-If `pi-vibe-memory` is in `owner` mode, do not configure another extension to inject memory or own compaction.
+`pi-vibe-memory` distinguishes real conflicts from stale settings:
+
+| Case | Doctor behavior |
+|:-----|:----------------|
+| `npm:pi-observational-memory` is still installed and `observational-memory.passive` is not `true` | Fails as a real competing memory owner. |
+| `npm:pi-observational-memory` is not installed, but `"observational-memory": { "passive": false }` remains in `~/.pi/agent/settings.json` | Warns as stale settings cleanup, not a hard owner conflict. |
+| `observational-memory.passive` is `true` | Passes. |
+| `vibeMemory.strictSingleOwner` is `true` | Escalates stale active legacy settings to a hard conflict. |
+
+If the package is already removed and only the warning remains, clean up `~/.pi/agent/settings.json` by either setting:
+
+```json
+{
+  "observational-memory": { "passive": true }
+}
+```
+
+or deleting the stale `observational-memory` block entirely. If `pi-vibe-memory` is in `owner` mode, do not configure another installed extension to inject memory or own compaction.
 
 ### Hindsight recall fails
 
-Check that the Hindsight server is running and reachable from the configured REST `baseUrl`, or switch to MCP bootstrap if Pi already has a working Hindsight MCP server. Hindsight failures should degrade to local memory rather than stop the session.
+Check that the Hindsight server is running and reachable from the configured REST `baseUrl`. If Pi already has a working Hindsight MCP server, prefer MCP bootstrap so `pi-vibe-memory` reuses that server URL and bearer token instead of trying `http://localhost:8888`:
+
+```json
+{
+  "vibeMemory": {
+    "hindsight": {
+      "enabled": true,
+      "source": "mcp",
+      "mcpServer": "hindsight"
+    }
+  }
+}
+```
+
+Hindsight failures should degrade to local memory rather than stop the session.
 
 ### Imported memories do not appear in prompts
 

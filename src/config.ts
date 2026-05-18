@@ -323,6 +323,8 @@ export async function loadVibeMemorySettingsFromFiles(paths: string[], options: 
   let settings = normalizeSettings(raw);
   if (settings.hindsight.enabled && settings.hindsight.source === "mcp") {
     settings = await applyMcpHindsightSettings(settings, options);
+  } else if (settings.hindsight.enabled && settings.hindsight.source === "rest") {
+    settings = await warnIfMcpHindsightExists(settings, options);
   }
   return settings;
 }
@@ -362,6 +364,25 @@ async function applyMcpHindsightSettings(
   };
 }
 
+async function warnIfMcpHindsightExists(
+  settings: NormalizedVibeMemorySettings,
+  options: LoadVibeMemorySettingsOptions,
+): Promise<NormalizedVibeMemorySettings> {
+  if (settings.hindsight.baseUrl !== DEFAULT_SETTINGS.hindsight.baseUrl) return settings;
+  const mcpPath = options.mcpConfigPath ?? path.join(options.agentDir ?? defaultAgentDir(), "mcp.json");
+  const mcpJson = await readJsonObject(mcpPath);
+  const servers = isPlainObject(mcpJson.mcpServers) ? mcpJson.mcpServers : {};
+  if (!isPlainObject(servers[settings.hindsight.mcpServer])) return settings;
+
+  return {
+    ...settings,
+    configWarnings: [
+      ...settings.configWarnings,
+      `Hindsight MCP server "${settings.hindsight.mcpServer}" is configured, but vibeMemory.hindsight.source is "rest" with default ${DEFAULT_SETTINGS.hindsight.baseUrl}; set hindsight.source="mcp" to reuse the MCP server instead of localhost.`,
+    ],
+  };
+}
+
 function deriveRestBaseUrl(rawUrl: string): string {
   const parsed = new URL(rawUrl);
   const mcpIndex = parsed.pathname.indexOf("/mcp/");
@@ -391,14 +412,31 @@ function defaultAgentDir(): string {
   return process.env.PI_CODING_AGENT_DIR || path.join(process.env.HOME || process.cwd(), ".pi", "agent");
 }
 
-export function detectConflicts(settingsJson: JsonObject): string[] {
+export type MemoryOwnerIssueReport = {
+  conflicts: string[];
+  warnings: string[];
+};
+
+export function detectMemoryOwnerIssues(settingsJson: JsonObject): MemoryOwnerIssueReport {
   const conflicts: string[] = [];
+  const warnings: string[] = [];
   const packages = Array.isArray(settingsJson.packages) ? settingsJson.packages.map(String) : [];
   const hasPackage = (needle: string) => packages.some((entry) => entry.toLowerCase().includes(needle.toLowerCase()));
+  const strictSingleOwner = isPlainObject(settingsJson.vibeMemory) && settingsJson.vibeMemory.strictSingleOwner === true;
 
   const observationalMemory = settingsJson["observational-memory"];
-  if ((hasPackage("pi-observational-memory") && !(isPlainObject(observationalMemory) && observationalMemory.passive === true)) || (isPlainObject(observationalMemory) && observationalMemory.passive !== true)) {
-    conflicts.push("pi-observational-memory appears active; set observational-memory.passive=true or remove the package.");
+  const hasObservationalConfig = isPlainObject(observationalMemory);
+  const observationalPassive = hasObservationalConfig && observationalMemory.passive === true;
+  const observationalActive = hasObservationalConfig && observationalMemory.passive !== true;
+  const observationalInstalled = hasPackage("pi-observational-memory");
+
+  if (observationalInstalled && !observationalPassive) {
+    conflicts.push("pi-observational-memory is installed and active; set observational-memory.passive=true or remove npm:pi-observational-memory.");
+  } else if (!observationalInstalled && observationalActive) {
+    const message = strictSingleOwner
+      ? "Stale observational-memory settings remain in ~/.pi/agent/settings.json with passive:false and strictSingleOwner=true; set observational-memory.passive=true or remove that block."
+      : "Stale observational-memory settings remain in ~/.pi/agent/settings.json with passive:false, but npm:pi-observational-memory is not installed; set observational-memory.passive=true or remove that block.";
+    (strictSingleOwner ? conflicts : warnings).push(message);
   }
 
   const continuousLearning = settingsJson.continuousLearning;
@@ -411,5 +449,9 @@ export function detectConflicts(settingsJson: JsonObject): string[] {
     conflicts.push("LaPis is installed; avoid enabling duplicate automatic memory injection.");
   }
 
-  return conflicts;
+  return { conflicts, warnings };
+}
+
+export function detectConflicts(settingsJson: JsonObject): string[] {
+  return detectMemoryOwnerIssues(settingsJson).conflicts;
 }

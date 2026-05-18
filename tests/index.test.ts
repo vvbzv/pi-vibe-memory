@@ -43,7 +43,7 @@ test("index registers namespaced tools, commands, and lifecycle hooks", () => {
   }
 });
 
-test("session_start loads config, opens runtime, warns on conflicts, and doctor command uses runtime", async () => {
+test("session_start loads config, opens runtime, warns on hard conflicts, and doctor command uses runtime", async () => {
   const root = await tempProject();
   await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
     packages: ["npm:pi-observational-memory"],
@@ -62,6 +62,32 @@ test("session_start loads config, opens runtime, warns on conflicts, and doctor 
 
   await pi.commands.get(COMMAND_NAMES.doctor).handler("", ctx);
   assert.ok(ctx.notifications.some((item) => /doctor|issues found|ok/i.test(item.message)));
+});
+
+test("session_start treats uninstalled active observational-memory config as stale warning", async () => {
+  const root = await tempProject();
+  await writeFile(path.join(root, ".pi", "settings.json"), JSON.stringify({
+    packages: ["git:github.com/vvbzv/pi-vibe-memory"],
+    "observational-memory": { passive: false },
+    vibeMemory: { dbPath: "memory.db", hindsight: { enabled: false }, meditation: { mode: "off" }, captureRawPrompts: true },
+  }));
+  const pi = new FakePi();
+  piVibeMemory(pi as any);
+  const ctx = fakeContext(root);
+
+  await pi.handlers.get("session_start")?.({ reason: "startup" }, ctx);
+
+  assert.ok(ctx.notifications.some((item) => /Stale observational-memory settings remain.*passive:false/i.test(item.message) && item.level === "warning"));
+  assert.ok(!ctx.notifications.some((item) => /competing memory owner detected/i.test(item.message)));
+
+  await pi.handlers.get("turn_end")?.({ turnIndex: 1, prompt: "Please inspect src/index.ts", message: { content: "Assistant edited src/index.ts for memory lifecycle" } }, ctx);
+  const compact = await pi.handlers.get("session_before_compact")?.({ preparation: { firstKeptEntryId: "entry", tokensBefore: 1 }, branchEntries: [] }, ctx);
+  assert.equal(compact.compaction.details.type, "pi-vibe-memory");
+
+  await pi.commands.get(COMMAND_NAMES.doctor).handler("", ctx);
+  const doctorMessage = ctx.notifications.at(-1)?.message ?? "";
+  assert.match(doctorMessage, /config warnings: warn - Stale observational-memory settings/i);
+  assert.doesNotMatch(doctorMessage, /Legacy replacement readiness: fail/i);
 });
 
 test("session_start surfaces settings config warnings", async () => {

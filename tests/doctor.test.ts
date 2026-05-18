@@ -142,7 +142,29 @@ test("runDoctorChecks blocks legacy uninstall readiness when legacy owners are a
 
   assert.equal(result.safeToUninstallLegacy, false);
   assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "fail");
+  assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.message, "Competing memory owner cleanup required before legacy replacement is ready.");
   assert.ok(result.legacyRemovalAdvice.some((item) => item.includes("Resolve competing memory owners")));
+});
+
+test("runDoctorChecks treats stale legacy config as warning, not uninstall blocker", () => {
+  const staleWarning = "Stale observational-memory settings remain in ~/.pi/agent/settings.json with passive:false, but npm:pi-observational-memory is not installed; set observational-memory.passive=true or remove that block.";
+  const result = runDoctorChecks({
+    settings: DEFAULT_SETTINGS,
+    configWarnings: [staleWarning],
+    conflicts: [],
+    database: { status: "ok", message: "SQLite reachable" },
+    toolNames: Object.values(TOOL_NAMES),
+    commandNames: Object.values(COMMAND_NAMES),
+    migrationStatus: {
+      continuousLearning: { dryRunCompleted: true, applied: true, needsReview: 0 },
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.safeToUninstallLegacy, true);
+  assert.equal(result.checks.find((check) => check.name === "config warnings")?.status, "warn");
+  assert.equal(result.checks.find((check) => check.name === "Legacy replacement readiness")?.status, "pass");
+  assert.ok(!result.legacyRemovalAdvice.some((item) => item.includes("Resolve competing memory owners")));
 });
 
 test("runDoctorChecks blocks legacy uninstall readiness when migration status is missing", () => {

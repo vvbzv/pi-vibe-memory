@@ -120,13 +120,16 @@ function checkLegacyReplacementReadiness(input: DoctorInput): { check: DoctorChe
   if (!migrationApplied) advice.push("Run /vibe-memory-import continuous-learning --dry-run, then apply the import explicitly when the preview is correct.");
 
   if (blockers.length > 0) {
+    const onlyCompetingOwnerBlocker = blockers.length === 1 && blockers[0] === "Resolve competing memory owners before removing legacy packages.";
     return {
       safeToUninstallLegacy: false,
       legacyRemovalAdvice: [...blockers, ...advice],
       check: {
         name: "Legacy replacement readiness",
         status: "fail",
-        message: "Not safe to uninstall legacy memory packages yet.",
+        message: onlyCompetingOwnerBlocker
+          ? "Competing memory owner cleanup required before legacy replacement is ready."
+          : "Not safe to uninstall legacy memory packages yet.",
         details: [...blockers, ...advice],
       },
     };

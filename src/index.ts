@@ -2,7 +2,7 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { detectConflicts, loadVibeMemorySettingsFromFiles, type NormalizedVibeMemorySettings } from "./config.js";
+import { detectMemoryOwnerIssues, loadVibeMemorySettingsFromFiles, type NormalizedVibeMemorySettings } from "./config.js";
 import { buildToolDefinitions } from "./tools.js";
 import { registerVibeMemoryCommands } from "./commands.js";
 import { DEFAULT_DB_RELATIVE_PATH, PACKAGE_NAME } from "./constants.js";
@@ -36,10 +36,14 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
       const settingsPaths = [path.join(getAgentDir(), "settings.json"), path.join(cwd, ".pi", "settings.json")];
       const rawSettings = await readMergedSettings(settingsPaths);
       const settings = await loadVibeMemorySettingsFromFiles(settingsPaths);
-      const conflicts = detectConflicts(rawSettings);
-      const effectiveSettings = settings.strictSingleOwner && conflicts.length > 0
-        ? { ...settings, mode: "toolsOnly" as const, compaction: { ...settings.compaction, enabled: false, mode: "off" as const } }
+      const ownerIssues = detectMemoryOwnerIssues(rawSettings);
+      const conflicts = ownerIssues.conflicts;
+      const settingsWithWarnings = ownerIssues.warnings.length > 0
+        ? { ...settings, configWarnings: [...settings.configWarnings, ...ownerIssues.warnings] }
         : settings;
+      const effectiveSettings = settingsWithWarnings.strictSingleOwner && conflicts.length > 0
+        ? { ...settingsWithWarnings, mode: "toolsOnly" as const, compaction: { ...settingsWithWarnings.compaction, enabled: false, mode: "off" as const } }
+        : settingsWithWarnings;
       const dbPath = resolveDbPath(effectiveSettings, cwd);
       const db = openVibeMemoryDb(dbPath);
       const repository = new VibeMemoryRepository(db);
@@ -66,7 +70,7 @@ export default function piVibeMemory(pi: ExtensionAPI): void {
 
       for (const warning of effectiveSettings.configWarnings) notify(ctx, `${PACKAGE_NAME}: ${warning}`, "warning");
       for (const conflict of conflicts) notify(ctx, `${PACKAGE_NAME}: competing memory owner detected: ${conflict}`, "warning");
-      if (settings.strictSingleOwner && conflicts.length > 0) notify(ctx, `${PACKAGE_NAME}: strictSingleOwner conflict detected; runtime forced to toolsOnly and compaction disabled.`, "warning");
+      if (settingsWithWarnings.strictSingleOwner && conflicts.length > 0) notify(ctx, `${PACKAGE_NAME}: strictSingleOwner conflict detected; runtime forced to toolsOnly and compaction disabled.`, "warning");
     } catch (error) {
       notify(ctx, `${PACKAGE_NAME}: config/runtime error: ${errorMessage(error)}`, "error");
     }

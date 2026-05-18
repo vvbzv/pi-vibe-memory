@@ -1,5 +1,5 @@
 import { createArtifactDocumentId, createObservationDocumentId } from "./banks.js";
-import type { MemoryItemInput } from "./client.js";
+import type { HindsightMetadata, MemoryItemInput } from "./client.js";
 import { scrubSecrets } from "../scrub.js";
 import type { ObservationRecord, SyncJobInput, SyncJobRecord, VibeMemoryRepository } from "../storage/repository.js";
 
@@ -48,18 +48,18 @@ export function buildHindsightMemoryItem(observation: ObservationRecord): Memory
     ...observation.tags,
   ]);
 
-  const metadata: Record<string, unknown> = {
+  const metadata = metadataStrings({
     source: "pi-vibe-memory",
     observationId: observation.id,
     workspaceId: observation.workspaceId,
+    sessionId: observation.sessionId,
     kind: observation.kind,
     scope: observation.scope,
     status,
     confidence: observation.confidence,
     trust: observation.trust,
     updatedAt: observation.updatedAt,
-  };
-  if (observation.sessionId) metadata.sessionId = observation.sessionId;
+  });
 
   return {
     content: buildObservationContent(observation),
@@ -141,8 +141,17 @@ function toMemoryItem(item: unknown): MemoryItemInput {
   if (typeof item.documentId === "string") memoryItem.documentId = item.documentId;
   if (item.updateMode === "append" || item.updateMode === "replace") memoryItem.updateMode = item.updateMode;
   if (Array.isArray(item.tags)) memoryItem.tags = item.tags.map(String);
-  if (isRecord(item.metadata)) memoryItem.metadata = item.metadata;
+  if (isRecord(item.metadata)) memoryItem.metadata = metadataStrings(item.metadata);
   return memoryItem;
+}
+
+function metadataStrings(input: Record<string, unknown>): HindsightMetadata {
+  const out: HindsightMetadata = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (value === undefined || value === null) continue;
+    out[key] = typeof value === "string" ? value : String(value);
+  }
+  return out;
 }
 
 function normalizeBatchLimit(value: number | undefined): number {
