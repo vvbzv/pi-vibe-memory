@@ -1,13 +1,20 @@
-# RELAY-NEXT — Session 3 targets
+# RELAY-NEXT — Session 4 targets
 
-## Priority 0 — Post-push confirmation
+## Priority 0 — Finish current change
 
-### [P0] Confirm docs-only push landed [execution-heavy]
+### [P0] Verify active-safe defaults [execution-heavy]
 
-- **Why it matters:** This pass should push README/relay docs to `origin/pi-vibe-memory-v1`.
-- **Success criteria:** `git status --short` is clean and `git log -1 --oneline` shows the docs commit on both local and remote branch.
-- **Depends on:** Current docs commit/push.
-- **Hint:** Pre-push verification already ran `npm run check`, `npm test`, and `npm pack --dry-run --json` successfully.
+- **Why it matters:** The current uncommitted changes alter package defaults and docs; they must be type-checked and tested before commit.
+- **Success criteria:** `npm run check`, `npm test`, and `npm pack --dry-run --json` all pass. Record exact pass counts and package file count in `docs/relay/RELAY.md` or final response.
+- **Depends on:** Current uncommitted code/docs.
+- **Hint:** Expect tests to cover `src/config.ts`, `tests/config.test.ts`, and `tests/meditation.test.ts` default threshold changes.
+
+### [P0] Commit and push active-safe defaults [execution-heavy]
+
+- **Why it matters:** User asked to make these defaults/docs/tests official and push to GitHub.
+- **Success criteria:** `git status --short` is clean after commit, `git log -1 --oneline` shows a commit like `Tune passive meditation defaults`, and `git push origin pi-vibe-memory-v1` succeeds.
+- **Depends on:** Verification passing.
+- **Hint:** Do not include `/Users/vvbz/.pi/agent/settings.json` or MCP credentials; only commit repo files.
 
 ## Priority 1 — Release hygiene
 
@@ -33,11 +40,11 @@
 - **Success criteria:** Decide one: keep branch install-only, create GitHub PR, or make a clean standalone clone for release work. Do not merge into the mixed parent without explicit confirmation.
 - **Depends on:** User preference.
 
-### [P2] Prepare release/install notes [creative-heavy]
+### [P2] Dogfood candidate quality [review-heavy]
 
-- **Why it matters:** Users need a safe path before npm publish.
-- **Success criteria:** README or release note includes a branch install command, recommends `pi-lean-ctx` additive mode when used together, warns not to run legacy memory owners beside `pi-vibe-memory` owner mode, and explains when to use `captureToolOutput: "off"` and longer Hindsight `timeoutMs`.
-- **Depends on:** Version/release decision.
+- **Why it matters:** Meditation now triggers sooner. Candidate quality should be watched so working instincts remain useful rather than noisy.
+- **Success criteria:** After a normal long session, run `/vibe-memory-review` or `vibe_memory_review` and inspect candidate counts/content; document whether thresholds need adjustment.
+- **Depends on:** Active-safe defaults installed and used in a fresh Pi runtime.
 
 ## Priority 3 — Review / audit
 
@@ -51,7 +58,8 @@
 
 | Item | First appeared | Status | Why still open |
 |:-----|:---------------|:-------|:---------------|
+| Commit active-safe meditation defaults | Session 4 | ⏳ Pending | Needs final verification first. |
 | Semver mismatch (`0.1.0` vs v1 milestone) | Implementation session | ⏭️ Open | Needs user release decision. |
 | Isolated Hindsight production smoke | Dogfood session | ⏭️ Open | User runtime sync passed; isolated release smoke remains useful. |
 | Branch not merged | Finalization session | ⏭️ Intentional | User chose keep-as-is to avoid mixed OMP workspace confusion. |
-| Slow Hindsight retain path | Session 3 | ⚠️ Known | User runtime needed `timeoutMs: 30000`; default remains lower unless changed later. |
+| Slow Hindsight retain path | Session 3 | ⚠️ Known | User runtime needed `timeoutMs: 30000`; package default remains lower unless changed later. |

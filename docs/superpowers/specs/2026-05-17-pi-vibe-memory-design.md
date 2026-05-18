@@ -205,15 +205,16 @@ Defaults:
 | `captureToolOutput` | `"errors"` | Tool output is high-risk and noisy. |
 | `captureRawPrompts` | `false` | Store semantic/redacted observations by default. |
 | `codeReferences.enabled` | `true` | Keep project artifact memory useful without indexing whole repos. |
-| `codeReferences.maxPerPrompt` | `3` | Keep code/doc references helpful but compact. |
+| `codeReferences.maxPerPrompt` | `2` | Keep code/doc references helpful but compact. |
 | `codeReferences.captureFromToolResults` | `true` | Test errors and edits often contain the best artifact provenance. |
 | `meditation.mode` | `"passive"` | Easy same-session consolidation without manual commands. |
-| `meditation.minObservations` | `12` | Avoid noisy reflection on too little evidence. |
-| `meditation.minIntervalMinutes` | `20` | Prevent repeated background work. |
+| `meditation.minObservations` | `4` | More active same-session consolidation while still requiring multiple observations. |
+| `meditation.minIntervalMinutes` | `10` | Prevent repeated background work while letting long sessions learn sooner. |
 | `meditation.timeoutMs` | `5000` | Meditation must never hang a session. |
 | `meditation.sameSession` | `true` | Completed candidates can help the current long session. |
 | `instincts.requireApprovalForDurable` | `true` | Same-session instincts are temporary until approved. |
-| `instincts.maxPromptItems` | `3` | Keep behavior hints small. |
+| `instincts.minEvidence` | `2` | Review-gated instincts still need repeated evidence before injection/promotion. |
+| `instincts.maxPromptItems` | `2` | Keep behavior hints small. |
 | `hindsight.defaultBudget` | `"low"` | Recall should not dominate turns. |
 | `sync.debounceMs` | `1500` | Batch hot-path writes/sync. |
 

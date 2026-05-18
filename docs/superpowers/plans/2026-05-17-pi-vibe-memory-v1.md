@@ -392,18 +392,18 @@ export const DEFAULT_SETTINGS: NormalizedVibeMemorySettings = {
   meditation: {
     enabled: true,
     mode: "passive",
-    minObservations: 12,
-    minIntervalMinutes: 20,
+    minObservations: 4,
+    minIntervalMinutes: 10,
     timeoutMs: 5000,
     budget: "low",
-    maxCandidates: 5,
+    maxCandidates: 3,
     sameSession: true,
   },
   instincts: {
     enabled: true,
     requireApprovalForDurable: true,
-    minEvidence: 3,
-    maxPromptItems: 3,
+    minEvidence: 2,
+    maxPromptItems: 2,
   },
   hindsight: {
     enabled: true,
@@ -1083,7 +1083,7 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: DEFAULT_SETTINGS,
-      unsummarizedObservationCount: 12,
+      unsummarizedObservationCount: 4,
       lastRunAt: null,
       now: new Date("2026-05-17T12:30:00.000Z"),
     }),
@@ -1093,7 +1093,7 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: DEFAULT_SETTINGS,
-      unsummarizedObservationCount: 2,
+      unsummarizedObservationCount: 3,
       lastRunAt: null,
       now: new Date("2026-05-17T12:30:00.000Z"),
     }),
@@ -1132,7 +1132,7 @@ test("parseMeditationCandidates keeps evidence-backed working instincts only", (
         },
       ],
     }),
-    minEvidence: 3,
+    minEvidence: 2,
   });
 
   assert.equal(candidates.length, 1);

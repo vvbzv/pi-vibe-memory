@@ -68,6 +68,21 @@ Recommended config shape, including a compatible `pi-lean-ctx` install:
       "enabled": true,
       "mode": "owner"
     },
+    "meditation": {
+      "enabled": true,
+      "mode": "passive",
+      "minObservations": 4,
+      "minIntervalMinutes": 10,
+      "budget": "low",
+      "maxCandidates": 3,
+      "sameSession": true
+    },
+    "instincts": {
+      "enabled": true,
+      "requireApprovalForDurable": true,
+      "minEvidence": 2,
+      "maxPromptItems": 2
+    },
     "hindsight": {
       "enabled": true,
       "source": "mcp",
@@ -132,7 +147,8 @@ Multiple memory extensions can silently fight each other:
 - Optional Hindsight REST bootstrap from Pi MCP server config.
 - Bounded untrusted prompt memory injection.
 - Owner-mode custom compaction continuity with safeguards against noisy over-window loops.
-- Passive same-session meditation for candidate reflections/instincts.
+- Passive same-session meditation for candidate reflections/instincts after at least 4 new observations, no more often than every 10 minutes, bounded to 3 candidates by default.
+- Instinct learning remains review-gated by default: at least 2 evidence observations are required and durable approval is explicit.
 - Non-deleting comparative revision: old knowledge is preserved, superseded, and explainable.
 - Lightweight code/doc/config/test reference digesting from conversation and tool text only.
 - Doctor diagnostics via `vibe_memory_doctor` and `/vibe-memory-doctor`.
@@ -199,6 +215,21 @@ If you install from Git, use:
     "compaction": {
       "enabled": true,
       "mode": "owner"
+    },
+    "meditation": {
+      "enabled": true,
+      "mode": "passive",
+      "minObservations": 4,
+      "minIntervalMinutes": 10,
+      "budget": "low",
+      "maxCandidates": 3,
+      "sameSession": true
+    },
+    "instincts": {
+      "enabled": true,
+      "requireApprovalForDurable": true,
+      "minEvidence": 2,
+      "maxPromptItems": 2
     },
     "hindsight": {
       "enabled": true,
@@ -567,6 +598,10 @@ v1 is token-light by default:
 | `localObservationLimit` | `4` |
 | `hindsightRecallLimit` | `4` |
 | `codeReferences.maxPerPrompt` | `2` |
+| `meditation.minObservations` | `4` |
+| `meditation.minIntervalMinutes` | `10` |
+| `meditation.maxCandidates` | `3` |
+| `instincts.minEvidence` | `2` |
 | `instincts.maxPromptItems` | `2` |
 | `revision.maxPromptItems` | `1` |
 

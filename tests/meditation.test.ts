@@ -23,7 +23,7 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: DEFAULT_SETTINGS,
-      unsummarizedObservationCount: 12,
+      unsummarizedObservationCount: 4,
       lastRunAt: null,
       now,
     }),
@@ -33,7 +33,7 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: DEFAULT_SETTINGS,
-      unsummarizedObservationCount: 2,
+      unsummarizedObservationCount: 3,
       lastRunAt: null,
       now,
     }),
@@ -43,7 +43,7 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: settingsWith({ enabled: false }),
-      unsummarizedObservationCount: 12,
+      unsummarizedObservationCount: 4,
       lastRunAt: null,
       now,
     }),
@@ -53,7 +53,7 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: settingsWith({ mode: "manual" }),
-      unsummarizedObservationCount: 12,
+      unsummarizedObservationCount: 4,
       lastRunAt: null,
       now,
     }),
@@ -63,7 +63,7 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: settingsWith({ sameSession: false }),
-      unsummarizedObservationCount: 12,
+      unsummarizedObservationCount: 4,
       lastRunAt: null,
       now,
     }),
@@ -73,8 +73,8 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: DEFAULT_SETTINGS,
-      unsummarizedObservationCount: 12,
-      lastRunAt: new Date("2026-05-17T12:15:00.000Z"),
+      unsummarizedObservationCount: 4,
+      lastRunAt: new Date("2026-05-17T12:25:00.000Z"),
       now,
     }),
     false,
@@ -83,8 +83,8 @@ test("shouldScheduleMeditation respects passive same-session thresholds", () => 
   assert.equal(
     shouldScheduleMeditation({
       settings: DEFAULT_SETTINGS,
-      unsummarizedObservationCount: 12,
-      lastRunAt: new Date("2026-05-17T12:09:59.000Z"),
+      unsummarizedObservationCount: 4,
+      lastRunAt: new Date("2026-05-17T12:19:59.000Z"),
       now,
     }),
     true,

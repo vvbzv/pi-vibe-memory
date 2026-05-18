@@ -30,8 +30,12 @@ test("normalizeSettings applies safe token-light defaults", () => {
   assert.equal(settings.codeReferences.enabled, true);
   assert.equal(settings.codeReferences.maxPerPrompt, 2);
   assert.equal(settings.meditation.mode, "passive");
+  assert.equal(settings.meditation.minObservations, 4);
+  assert.equal(settings.meditation.minIntervalMinutes, 10);
+  assert.equal(settings.meditation.maxCandidates, 3);
   assert.equal(settings.meditation.sameSession, true);
   assert.equal(settings.instincts.requireApprovalForDurable, true);
+  assert.equal(settings.instincts.minEvidence, 2);
   assert.equal(settings.instincts.maxPromptItems, 2);
   assert.equal(settings.revision.enabled, true);
   assert.equal(settings.revision.maxPromptItems, 1);

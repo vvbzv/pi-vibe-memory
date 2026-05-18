@@ -12,7 +12,7 @@ The package is local-first with SQLite persistence, deterministic capture, bound
 
 Automatic memory operations are deterministic and must not call hidden internal LLM agents. Compaction must not call Hindsight or an LLM. Custom compaction is fail-open: require a valid `firstKeptEntryId`, filter low-value `Assistant summary: tool=... status=error` telemetry, and return `undefined` when only noisy telemetry exists so Pi can use its default compaction. Old knowledge is superseded/inhibited with provenance rather than deleted. Prompt rendering and tool output must be token-light and scrub secrets.
 
-For the clean `pi-vibe-memory` + `pi-lean-ctx` setup, leave `pi-lean-ctx` in additive/default mode and prefer `captureToolOutput: "off"` so tool-error summaries do not pollute prompt memory. Slow self-hosted Hindsight retain paths may need `vibeMemory.hindsight.timeoutMs: 30000`; local SQLite remains the source of truth if Hindsight is offline or slow.
+For the clean `pi-vibe-memory` + `pi-lean-ctx` setup, leave `pi-lean-ctx` in additive/default mode and prefer `captureToolOutput: "off"` so tool-error summaries do not pollute prompt memory. Keep top-level `vibeMemory.mode: "owner"`; use nested `vibeMemory.meditation.mode: "passive"` for detached same-session reflection. Active-safe default thresholds are `meditation.minObservations: 4`, `meditation.minIntervalMinutes: 10`, `meditation.maxCandidates: 3`, `instincts.minEvidence: 2`, and `instincts.requireApprovalForDurable: true`. Slow self-hosted Hindsight retain paths may need `vibeMemory.hindsight.timeoutMs: 30000`; local SQLite remains the source of truth if Hindsight is offline or slow.
 
 ## Branch state — updated 2026-05-19
 

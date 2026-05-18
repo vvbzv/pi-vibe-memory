@@ -131,17 +131,17 @@ export const DEFAULT_SETTINGS: NormalizedVibeMemorySettings = {
   meditation: {
     enabled: true,
     mode: "passive",
-    minObservations: 12,
-    minIntervalMinutes: 20,
+    minObservations: 4,
+    minIntervalMinutes: 10,
     timeoutMs: 5000,
     budget: "low",
-    maxCandidates: 5,
+    maxCandidates: 3,
     sameSession: true,
   },
   instincts: {
     enabled: true,
     requireApprovalForDurable: true,
-    minEvidence: 3,
+    minEvidence: 2,
     maxPromptItems: 2,
   },
   revision: {

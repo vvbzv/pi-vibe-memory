@@ -1,4 +1,15 @@
 ---
+## 2026-05-19 — Session 4 — pi coding agent — 🟡 Caveat
+
+- **Accomplished:** Applied active-safe passive meditation/instinct defaults to the user's live Pi settings and updated repo defaults, tests, README, design docs, and relay docs to match.
+- **Verified:** User settings JSON valid and normalized as owner mode with nested passive meditation (`minObservations: 4`, `minIntervalMinutes: 10`, `maxCandidates: 3`) and review-gated instincts (`minEvidence: 2`, `maxPromptItems: 2`). Full repo verification is still pending for this uncommitted change.
+- **Not verified:** `npm run check`, `npm test`, `npm pack --dry-run --json`, final commit, and push are still pending.
+- **Root cause note:** Prior defaults (12 observations / 20 minutes / 5 candidates / 3 instinct evidence) were too conservative for same-session reflection to appear often in normal use.
+- **Safety behavior now documented:** Top-level owner mode stays enabled; only nested meditation mode is passive. Reflected instincts remain working/review-gated and require explicit durable approval.
+- **Mode:** routed
+- **Next model hint:** final verification / commit-push
+
+---
 ## 2026-05-19 — Session 3 — pi coding agent — 🟢 Clean
 
 - **Accomplished:** Audited the user's live Pi settings for `pi-vibe-memory` + `pi-lean-ctx`, set `captureToolOutput: "off"`, increased Hindsight timeout to `30000`, confirmed the RTK optimizer extension folder was removed, updated README and relay docs.
