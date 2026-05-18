@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="https://i.postimg.cc/kgcBSCwv/Pi-Vibe-Memory.png" alt="Pi Vibe Memory logo" width="320" />
+</p>
+
 # pi-vibe-memory
+
+> Latest update: owner-mode compaction now fails open when local memory only contains noisy tool-error telemetry, so Pi can use its default compaction to recover from repeated context-window failures.
 
 ## 60 Second Easy and Short
 
