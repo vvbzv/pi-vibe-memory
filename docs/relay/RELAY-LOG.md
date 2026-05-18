@@ -1,4 +1,14 @@
 ---
+## 2026-05-19 — Session 3 — pi coding agent — 🟢 Clean
+
+- **Accomplished:** Audited the user's live Pi settings for `pi-vibe-memory` + `pi-lean-ctx`, set `captureToolOutput: "off"`, increased Hindsight timeout to `30000`, confirmed the RTK optimizer extension folder was removed, updated README and relay docs.
+- **Verified:** Settings JSON valid; normalized `pi-vibe-memory` settings derive Hindsight REST from MCP as `http://192.168.1.112:8888` bank `pi-agent`; direct Hindsight retain succeeded with 30s timeout after ~25.8s; `/vibe-memory-doctor` ok; `/vibe-memory-sync` drained backlog; `/vibe-memory-stats` ended with `sync: 0 pending, 0 failed`, `compaction: owner owner-active`, `health: 0 conflicts`; `npm run check` clean; `npm test` 137/137 passing; `npm pack --dry-run --json` clean with 25 files.
+- **Root cause note:** The earlier sync failures were not memory loss; local SQLite was safe. Hindsight retain calls were slower than the default `1500ms` timeout, so queued jobs remained until timeout was raised and sync retried.
+- **Safety behavior now documented:** Recommended config includes `npm:pi-lean-ctx` in additive/default mode, `captureToolOutput: "off"` to avoid tool-error memory pollution, and `hindsight.timeoutMs: 30000` for slow self-hosted/LAN Hindsight servers.
+- **Mode:** routed
+- **Next model hint:** release hygiene / final verification
+
+---
 ## 2026-05-18 — Session 2 — pi coding agent — 🟢 Clean
 
 - **Accomplished:** Diagnosed the repeated over-window compaction loop risk, hardened owner compaction to fail open on malformed/noisy context, fixed observation lifecycle sync payloads, updated README and relay docs.

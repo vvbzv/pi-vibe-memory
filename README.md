@@ -24,6 +24,7 @@ Pi turn/session events
 What it does:
 
 - Captures short, scrubbed observations from useful turns.
+- Can disable tool-output capture with `captureToolOutput: "off"` to avoid polluting memory with noisy tool-error telemetry.
 - Injects **one bounded memory block** into prompts when in `owner` mode.
 - Marks injected memory as **untrusted reference material**, not instructions.
 - Stores memory locally under `~/.pi/agent/vibe-memory/memory.db` by default.
@@ -49,22 +50,31 @@ Most common commands:
 /vibe-memory-disable-injection # disable prompt injection for this runtime
 ```
 
-Recommended config shape:
+Recommended config shape, including a compatible `pi-lean-ctx` install:
 
 ```json
 {
-  "packages": ["git:github.com/vvbzv/pi-vibe-memory"],
+  "packages": [
+    "npm:pi-lean-ctx",
+    "git:github.com/vvbzv/pi-vibe-memory"
+  ],
   "observational-memory": { "passive": true },
   "continuousLearning": { "enabled": false },
   "vibeMemory": {
     "enabled": true,
     "mode": "owner",
+    "captureToolOutput": "off",
+    "compaction": {
+      "enabled": true,
+      "mode": "owner"
+    },
     "hindsight": {
       "enabled": true,
       "source": "mcp",
       "mcpServer": "hindsight",
       "recallScope": "hybrid",
-      "bankWideLimit": 1
+      "bankWideLimit": 1,
+      "timeoutMs": 30000
     }
   }
 }
@@ -172,7 +182,10 @@ If you install from Git, use:
 
 ```json
 {
-  "packages": ["git:github.com/vvbzv/pi-vibe-memory"],
+  "packages": [
+    "npm:pi-lean-ctx",
+    "git:github.com/vvbzv/pi-vibe-memory"
+  ],
   "observational-memory": {
     "passive": true
   },
@@ -182,6 +195,7 @@ If you install from Git, use:
   "vibeMemory": {
     "enabled": true,
     "mode": "owner",
+    "captureToolOutput": "off",
     "compaction": {
       "enabled": true,
       "mode": "owner"
@@ -191,7 +205,8 @@ If you install from Git, use:
       "source": "mcp",
       "mcpServer": "hindsight",
       "recallScope": "hybrid",
-      "bankWideLimit": 1
+      "bankWideLimit": 1,
+      "timeoutMs": 30000
     }
   }
 }
@@ -206,6 +221,18 @@ If/when the package is published to npm, the package entry can become:
 ```
 
 ### Modes
+
+`captureToolOutput` controls whether tool execution summaries become observations. For the cleanest memory with `pi-lean-ctx`, prefer:
+
+```json
+{
+  "vibeMemory": {
+    "captureToolOutput": "off"
+  }
+}
+```
+
+This does not disable normal turn capture; it only avoids low-value rows like `Assistant summary: tool=ctx_find ... status=error`.
 
 `vibeMemory.mode` controls runtime behavior:
 
@@ -242,11 +269,14 @@ Use this when Pi already has a working Hindsight MCP server.
       "source": "mcp",
       "mcpServer": "hindsight",
       "recallScope": "hybrid",
-      "bankWideLimit": 1
+      "bankWideLimit": 1,
+      "timeoutMs": 30000
     }
   }
 }
 ```
+
+`timeoutMs` defaults to `1500`. Increase it when `/vibe-memory-sync` reports Hindsight timeouts; slower retain calls on remote or LAN servers may need `30000`.
 
 When `source` is `"mcp"`, the package reads the configured MCP server from Pi's `mcp.json`:
 
@@ -285,7 +315,7 @@ Optional auth:
 }
 ```
 
-Hindsight being offline is a warning/fallback condition. Local memory continues to work.
+Hindsight being offline or slow is a warning/fallback condition. Local memory continues to work. If sync jobs show timeout failures, raise `vibeMemory.hindsight.timeoutMs` and run `/vibe-memory-sync` again.
 
 ---
 
@@ -430,13 +460,15 @@ If the count does not drop, inspect the real failure cause. Common causes:
 - request timeout;
 - payload validation issue.
 
-Timeout failures can succeed on a later manual retry.
+Timeout failures can succeed on a later manual retry. If the Hindsight server is healthy but retain calls are slow, increase `vibeMemory.hindsight.timeoutMs` before retrying; `30000` is a practical starting point for slow LAN/self-hosted servers.
 
 ---
 
 ## Migration from legacy memory packages
 
 Use this path when replacing `pi-observational-memory` and/or `pi-continuous-learning`.
+
+`pi-vibe-memory` is compatible with `pi-lean-ctx` when `pi-lean-ctx` is left in its default additive mode. Do not set `LEAN_CTX_PI_MODE=replace` unless you intentionally want to remove Pi's built-in `read`/`bash`/`grep`/`find`/`ls` tools from the model prompt. `pi-vibe-memory` tools remain namespaced either way, but additive mode is easier to debug.
 
 1. Install and configure `pi-vibe-memory`.
 2. Make old memory packages passive or disabled:
@@ -741,6 +773,26 @@ If using REST, verify:
 - timeout is high enough for your server.
 
 Hindsight failures should degrade to local memory rather than stopping the Pi session.
+
+### Tool-error memory noise
+
+If prompt memory contains many rows like:
+
+```text
+Assistant summary: tool=ctx_find id=... status=error
+```
+
+set:
+
+```json
+{
+  "vibeMemory": {
+    "captureToolOutput": "off"
+  }
+}
+```
+
+Then restart or reload Pi. Existing local rows are preserved for provenance, but future tool-error summaries will not be captured.
 
 ### Imported memories do not appear in prompts
 

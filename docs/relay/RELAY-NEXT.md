@@ -1,13 +1,13 @@
-# RELAY-NEXT — Session 2 targets
+# RELAY-NEXT — Session 3 targets
 
-## Priority 0 — Post-fix validation
+## Priority 0 — Post-push confirmation
 
-### [P0] Dogfood compaction-loop fix [execution-heavy]
+### [P0] Confirm docs-only push landed [execution-heavy]
 
-- **Why it matters:** The code now falls back to Pi default compaction when local memory only contains noisy tool-error telemetry, but the live Pi runtime should be exercised after reinstall/update.
-- **Success criteria:** In an isolated long/over-window-ish session or controlled hook test, verify `session_before_compact` returns no custom compaction for only `Assistant summary: tool=... status=error` observations and Pi continues with default compaction instead of looping.
-- **Depends on:** Current branch installed in the Pi runtime being tested.
-- **Hint:** Existing regression coverage is `beforeCompact falls back to Pi default compaction for noisy over-window telemetry` in `tests/runtime.test.ts`.
+- **Why it matters:** This pass should push README/relay docs to `origin/pi-vibe-memory-v1`.
+- **Success criteria:** `git status --short` is clean and `git log -1 --oneline` shows the docs commit on both local and remote branch.
+- **Depends on:** Current docs commit/push.
+- **Hint:** Pre-push verification already ran `npm run check`, `npm test`, and `npm pack --dry-run --json` successfully.
 
 ## Priority 1 — Release hygiene
 
@@ -18,12 +18,12 @@
 - **Depends on:** User approval for semver choice.
 - **Hint:** If publishing as the first public stable replacement for two memory extensions, `1.0.0` is clearer.
 
-### [P1] Live Hindsight smoke test [execution-heavy]
+### [P1] Live Hindsight smoke in isolated Pi agent dir [execution-heavy]
 
-- **Why it matters:** Local-first dogfood passed, but final stats pass did not re-test the live Hindsight server.
+- **Why it matters:** The user's live runtime was fixed and synced, but a clean isolated `PI_CODING_AGENT_DIR` smoke is still useful before release docs claim production readiness.
 - **Success criteria:** In an isolated `PI_CODING_AGENT_DIR`, configure `hindsight.source: "mcp"` or REST to the user's Hindsight server, run `vibe_memory_doctor`, store a test memory, sync it, and recall it through Hindsight without leaking credentials.
-- **Depends on:** Hindsight server reachable and MCP OAuth callback port free.
-- **Hint:** If `pi-mcp-adapter` OAuth callback fails, set `MCP_OAUTH_CALLBACK_PORT` to a free port.
+- **Depends on:** Hindsight server reachable and MCP/OAuth config available.
+- **Hint:** For slow self-hosted Hindsight retain paths, include `vibeMemory.hindsight.timeoutMs: 30000`.
 
 ## Priority 2 — Integration workflow
 
@@ -33,10 +33,10 @@
 - **Success criteria:** Decide one: keep branch install-only, create GitHub PR, or make a clean standalone clone for release work. Do not merge into the mixed parent without explicit confirmation.
 - **Depends on:** User preference.
 
-### [P2] Prepare install instructions from GitHub branch [creative-heavy]
+### [P2] Prepare release/install notes [creative-heavy]
 
 - **Why it matters:** Users need a safe path before npm publish.
-- **Success criteria:** README or release note includes a branch install command and warns not to run legacy memory owners beside `pi-vibe-memory` owner mode.
+- **Success criteria:** README or release note includes a branch install command, recommends `pi-lean-ctx` additive mode when used together, warns not to run legacy memory owners beside `pi-vibe-memory` owner mode, and explains when to use `captureToolOutput: "off"` and longer Hindsight `timeoutMs`.
 - **Depends on:** Version/release decision.
 
 ## Priority 3 — Review / audit
@@ -52,5 +52,6 @@
 | Item | First appeared | Status | Why still open |
 |:-----|:---------------|:-------|:---------------|
 | Semver mismatch (`0.1.0` vs v1 milestone) | Implementation session | ⏭️ Open | Needs user release decision. |
-| Live Hindsight production smoke | Dogfood session | ⏭️ Open | Local-first verified; live server not rerun after final changes. |
+| Isolated Hindsight production smoke | Dogfood session | ⏭️ Open | User runtime sync passed; isolated release smoke remains useful. |
 | Branch not merged | Finalization session | ⏭️ Intentional | User chose keep-as-is to avoid mixed OMP workspace confusion. |
+| Slow Hindsight retain path | Session 3 | ⚠️ Known | User runtime needed `timeoutMs: 30000`; default remains lower unless changed later. |
